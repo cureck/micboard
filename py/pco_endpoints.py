@@ -178,10 +178,9 @@ def init_pco_scheduler():
         client_id = pco_config.get('client_id')
         client_secret = pco_config.get('client_secret')
         
-        # Fallback to hardcoded values (should be moved to config)
         if not client_id or not client_secret:
-            client_id = 'bd988f71a7fa77b98ca5f6f71e39c3cd1a1c8cffa397c244efdba11791802cc0'
-            client_secret = 'pco_pat_800c9c5c6222246936e8d2bc3659357fa6f6a28d4ca30584f5a5227e3a26c88b042539bd'
+            logging.error("PCO credentials not configured")
+            return False
         
         # Initialize scheduler
         scheduler = pco_scheduler.init_scheduler(client_id, client_secret)
