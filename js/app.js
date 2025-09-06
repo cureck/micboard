@@ -14,6 +14,7 @@ import { keybindings } from './kbd.js';
 import { setBackground, setInfoDrawer } from './display.js';
 import { setTimeMode } from './chart-smoothie.js';
 import { initConfigEditor } from './config.js';
+import { initIntegrationsUI } from './integrations.js';
 
 import '../css/colors.scss';
 import '../css/style.scss';
@@ -93,6 +94,95 @@ function groupTableBuilder(data) {
   return plist;
 }
 
+export function updateLiveServiceIndicator() {
+  console.log('🔄 updateLiveServiceIndicator: Starting update check');
+  
+  // Read plan_of_day from data.json (already queried elsewhere), fallback to a direct fetch if needed
+  fetch(dataURL)
+    .then(r => r.json())
+    .then(full => {
+      console.log('📊 updateLiveServiceIndicator: Received data:', full);
+      
+      const planOfDay = full.plan_of_day || {};
+      console.log('📅 updateLiveServiceIndicator: plan_of_day data:', planOfDay);
+      
+      // If multiple service types, pick the first entry for display
+      const firstKey = Object.keys(planOfDay)[0];
+      const pod = firstKey ? planOfDay[firstKey] : null;
+      console.log('🎯 updateLiveServiceIndicator: Selected plan of day:', pod);
+      
+      if (pod && pod.names_by_slot) {
+        console.log('👥 updateLiveServiceIndicator: names_by_slot:', pod.names_by_slot);
+        console.log('👥 updateLiveServiceIndicator: slot count:', Object.keys(pod.names_by_slot).length);
+      }
+
+      const indicator = document.getElementById('live-service-indicator');
+      const icon = document.getElementById('live-service-icon');
+      const text = document.getElementById('live-service-text');
+
+      if (pod && pod.start_time && pod.live_time) {
+        const now = new Date();
+        const liveStart = new Date(pod.live_time);
+        const serviceStart = new Date(pod.start_time);
+        // Service considered live if now between live_start and end of day of start
+        const endOfDay = new Date(serviceStart);
+        endOfDay.setHours(23, 59, 59, 999);
+
+        console.log('⏰ updateLiveServiceIndicator: Time comparison:', {
+          now: now.toISOString(),
+          liveStart: liveStart.toISOString(),
+          serviceStart: serviceStart.toISOString(),
+          endOfDay: endOfDay.toISOString(),
+          isLive: now >= liveStart && now <= endOfDay
+        });
+
+        const startTimeEST = serviceStart.toLocaleString('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit', hour12: true });
+        const endTimeEST = endOfDay.toLocaleString('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit', hour12: true });
+
+        if (now >= liveStart && now <= endOfDay) {
+          console.log('🟢 updateLiveServiceIndicator: Service is LIVE - updating UI');
+          icon.style.display = 'inline-block';
+          text.innerHTML = `${pod.title || 'Service'} (${startTimeEST} - ${endTimeEST} EST)`;
+          indicator.className = 'text-white';
+          
+          // Force refresh the schedule cache when we detect a live service
+          // This ensures the plan_of_day data is up to date
+          console.log('🔄 updateLiveServiceIndicator: Triggering schedule cache refresh');
+          fetch('/api/pco/force-refresh-schedule', { method: 'POST' })
+            .then(response => response.json())
+            .then(data => console.log('✅ updateLiveServiceIndicator: Schedule cache refresh result:', data))
+            .catch(err => console.log('❌ updateLiveServiceIndicator: Failed to refresh schedule cache:', err));
+        } else {
+          // Check if this is a manually selected plan (even if not in live window)
+          const isManualPlan = pod.plan_id && (now < liveStart);
+          if (isManualPlan) {
+            console.log('🎯 updateLiveServiceIndicator: Manual plan selected - showing in navbar');
+            icon.style.display = 'inline-block';
+            text.innerHTML = `${pod.title || 'Service'} (Manual - ${startTimeEST} EST)`;
+            indicator.className = 'text-info';
+          } else {
+            console.log('🔴 updateLiveServiceIndicator: Service is NOT live - showing "No Service"');
+            icon.style.display = 'none';
+            text.innerHTML = 'No Service';
+            indicator.className = 'text-muted';
+          }
+        }
+      } else {
+        console.log('⚠️ updateLiveServiceIndicator: No valid plan of day data found');
+        const icon = document.getElementById('live-service-icon');
+        const text = document.getElementById('live-service-text');
+        icon.style.display = 'none';
+        text.innerHTML = 'No Service';
+      }
+    }).catch((error) => {
+      console.log('❌ updateLiveServiceIndicator: Error fetching data:', error);
+      const icon = document.getElementById('live-service-icon');
+      const text = document.getElementById('live-service-text');
+      icon.style.display = 'none';
+      text.innerHTML = 'No Service';
+    });
+}
+
 export function updateNavLinks() {
   let str = '';
   for (let i = 1; i <= 9; i += 1) {
@@ -107,29 +197,42 @@ export function updateNavLinks() {
 }
 
 function mapGroups() {
-  $('a#go-extended').click(() => {
-    slotEditToggle();
-    $('.collapse').collapse('hide');
-  });
-
-  $('a#go-config').click(() => {
-    initConfigEditor();
-    $('.collapse').collapse('hide');
-  });
-
-  $('a#go-groupedit').click(() => {
-    if (micboard.group !== 0) {
-      groupEditToggle();
+  // Initialize consistent navigation system
+  import('./navigation.js').then(nav => {
+    nav.initConsistentNavigation();
+  }).catch(error => {
+    console.error('Failed to load consistent navigation, using fallback handlers:', error);
+    
+    // Fallback to original handlers if navigation module fails
+    $('a#go-extended').click(() => {
+      slotEditToggle();
       $('.collapse').collapse('hide');
-    }
-  });
+    });
 
-  $('a.preset-link').each(function(index) {
-    const id = parseInt($(this).attr('id')[9], 10);
-
-    $(this).click(() => {
-      renderGroup(id);
+    $('a#go-config').click(() => {
+      initConfigEditor();
       $('.collapse').collapse('hide');
+    });
+
+    $('a#go-integrations').click(() => {
+      initIntegrationsUI();
+      $('.collapse').collapse('hide');
+    });
+
+    $('a#go-groupedit').click(() => {
+      if (micboard.group !== 0) {
+        groupEditToggle();
+        $('.collapse').collapse('hide');
+      }
+    });
+
+    $('a.preset-link').each(function(index) {
+      const id = parseInt($(this).attr('id')[9], 10);
+
+      $(this).click(() => {
+        renderGroup(id);
+        $('.collapse').collapse('hide');
+      });
     });
   });
 
@@ -190,7 +293,7 @@ export function updateHash() {
 
 }
 
-function dataFilterFromList(data) {
+export function dataFilterFromList(data) {
   data.receivers.forEach((rx) => {
     rx.tx.forEach((t) => {
       const tx = t;
@@ -255,6 +358,13 @@ $(document).ready(() => {
   console.log('Starting Micboard version: ' + VERSION);
   readURLParameters();
   keybindings();
+  
+  // Initialize live service indicator
+  updateLiveServiceIndicator();
+  
+  // Update live service indicator every 30 seconds when service is live
+  setInterval(updateLiveServiceIndicator, 30 * 1000);
+  
   if (micboard.url.demo === 'true') {
     setTimeout(() => {
       $('#hud').show();

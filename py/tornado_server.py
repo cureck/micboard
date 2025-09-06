@@ -3,13 +3,21 @@ import os
 import asyncio
 import socket
 import logging
+import secrets
+from datetime import datetime, timezone
+from urllib.parse import urlencode
 
 from tornado import websocket, web, ioloop, escape
+from requests_oauthlib import OAuth2Session
 
 import shure
 import config
 import discover
 import offline
+import planning_center
+import pco_endpoints
+import google_drive
+import micboard
 
 
 # https://stackoverflow.com/questions/5899497/checking-file-extension
@@ -67,7 +75,18 @@ class AboutHandler(web.RequestHandler):
 class JsonHandler(web.RequestHandler):
     def get(self):
         self.set_header('Content-Type', 'application/json')
-        self.write(micboard_json(shure.NetworkDevices))
+        # Inject plan_of_day into the json payload
+        try:
+            from planning_center import get_cached_plan_of_day
+            payload = json.loads(micboard_json(shure.NetworkDevices))
+            plan_of_day = get_cached_plan_of_day()
+            logging.info(f"JsonHandler: plan_of_day data: {plan_of_day}")
+            payload['plan_of_day'] = plan_of_day
+            self.write(json.dumps(payload, sort_keys=True, indent=4))
+        except Exception as e:
+            logging.error(f"JsonHandler: Error getting plan_of_day: {e}")
+            # Fallback to original if anything goes wrong
+            self.write(micboard_json(shure.NetworkDevices))
 
 class SocketHandler(websocket.WebSocketHandler):
     clients = set()
@@ -124,7 +143,7 @@ class SlotHandler(web.RequestHandler):
         self.write('{}')
         for slot_update in data:
             config.update_slot(slot_update)
-            print(slot_update)
+            logging.debug(f"Slot update: {slot_update}")
 
 class ConfigHandler(web.RequestHandler):
     def get(self):
@@ -132,7 +151,7 @@ class ConfigHandler(web.RequestHandler):
 
     def post(self):
         data = json.loads(self.request.body)
-        print(data)
+        logging.debug(f"Config update payload: {data}")
         self.write('{}')
         config.reconfig(data)
 
@@ -143,14 +162,1146 @@ class GroupUpdateHandler(web.RequestHandler):
     def post(self):
         data = json.loads(self.request.body)
         config.update_group(data)
-        print(data)
+        logging.debug(f"Group update: {data}")
         self.write(data)
 
 class MicboardReloadConfigHandler(web.RequestHandler):
     def post(self):
-        print("RECONFIG")
+        logging.info("RECONFIG")
         config.reconfig()
         self.write("restarting")
+
+
+class PCOServiceTypesHandler(web.RequestHandler):
+    """Handler for fetching PCO service types."""
+    def get(self):
+        self.set_header('Content-Type', 'application/json')
+        service_types = planning_center.get_service_types()
+        self.write(json.dumps(service_types))
+
+
+class PCOTeamsHandler(web.RequestHandler):
+    """Handler for fetching PCO teams."""
+    def get(self):
+        service_type_ids = self.get_arguments('service_type_ids[]')
+        if not service_type_ids:
+            service_type_ids = self.get_argument('service_type_ids', '').split(',')
+        
+        self.set_header('Content-Type', 'application/json')
+        teams = planning_center.get_teams(service_type_ids)
+        self.write(json.dumps(teams))
+
+
+class PCOPositionsHandler(web.RequestHandler):
+    """Handler for fetching PCO positions."""
+    def get(self):
+        service_type_ids = self.get_arguments('service_type_ids[]')
+        if not service_type_ids:
+            service_type_ids = self.get_argument('service_type_ids', '').split(',')
+        team_name = self.get_argument('team_name')
+        
+        logging.debug(f"PCOPositionsHandler: Received request for team '{team_name}' with service_type_ids: {service_type_ids}")
+        
+        self.set_header('Content-Type', 'application/json')
+        positions = planning_center.get_positions(service_type_ids, team_name)
+        logging.debug(f"PCOPositionsHandler: Returning {len(positions)} positions")
+        self.write(json.dumps(positions))
+
+
+class PCOAuthHandler(web.RequestHandler):
+    """Handler for PCO Personal Access Token validation."""
+    def get(self):
+        # Get current credentials
+        client_id, client_secret = planning_center.get_pco_credentials()
+        
+        # Debug logging
+        logging.debug(f"PCO Auth - Client ID: {client_id[:10]}... (length: {len(client_id)})")
+        logging.debug(f"PCO Auth - Client Secret: {'*' * len(client_secret) if client_secret else 'None'} (length: {len(client_secret)})")
+        
+        if not client_id or not client_secret:
+            self.set_status(400)
+            self.write('PCO credentials not configured. Please save your Client ID and Client Secret first.')
+            return
+        
+        # Test the credentials by making a simple API call
+        try:
+            session = planning_center.get_pco_session()
+            if not session:
+                self.set_status(400)
+                self.write('Failed to create PCO session')
+                return
+            
+            # Test API call to verify credentials
+            response = planning_center._make_pco_request(session, f"{planning_center.PCO_API_BASE}/service_types")
+            if not response:
+                self.set_status(400)
+                self.write('Failed to connect to PCO API')
+                return
+            
+            # Credentials are valid, save to config
+            if 'integrations' not in config.config_tree:
+                config.config_tree['integrations'] = {}
+            if 'planning_center' not in config.config_tree['integrations']:
+                config.config_tree['integrations']['planning_center'] = {}
+            
+            config.config_tree['integrations']['planning_center']['client_id'] = client_id
+            config.config_tree['integrations']['planning_center']['client_secret'] = client_secret
+            config.save_current_config()
+            
+            # Start sync thread
+            planning_center.start_sync_thread()
+            
+            self.write(json.dumps({
+                'success': True,
+                'message': 'PCO credentials validated successfully!'
+            }))
+            
+        except Exception as e:
+            logging.error(f"PCO credential validation error: {e}")
+            self.set_status(400)
+            self.write(f'Credential validation failed: {str(e)}')
+
+
+class PCOSyncHandler(web.RequestHandler):
+    """Handler for manually triggering PCO sync."""
+    def post(self):
+        try:
+            logging.info("Manual PCO sync triggered")
+            planning_center.sync_assignments()
+            planning_center.refresh_schedule_cache_now()
+            self.write(json.dumps({'status': 'success', 'message': 'PCO sync completed'}))
+        except Exception as e:
+            logging.error(f"Manual PCO sync error: {e}")
+            self.set_status(500)
+            self.write(json.dumps({'status': 'error', 'message': str(e)}))
+
+
+class PCOResetHandler(web.RequestHandler):
+    """Handler for resetting PCO sync state."""
+    def post(self):
+        try:
+            logging.info("PCO sync state reset triggered")
+            planning_center.clear_assignment_state()
+            planning_center.sync_assignments()
+            # Also refresh schedule cache immediately
+            planning_center.refresh_schedule_cache_now()
+            self.write(json.dumps({'status': 'success', 'message': 'PCO sync state reset and sync completed'}))
+        except Exception as e:
+            logging.error(f"PCO reset error: {e}")
+            self.set_status(500)
+            self.write(json.dumps({'status': 'error', 'message': str(e)}))
+
+
+class ScheduleHandler(web.RequestHandler):
+    """Handler for getting service schedules."""
+    def get(self):
+        try:
+            import planning_center
+            import config
+            
+            # Get PCO configuration
+            pco_config = config.config_tree.get('integrations', {}).get('planning_center', {})
+            if not pco_config:
+                self.write(json.dumps({'schedules': {}, 'message': 'No PCO configuration'}))
+                return
+            
+            service_types = pco_config.get('service_types', [])
+            if not service_types:
+                self.write(json.dumps({'schedules': {}, 'message': 'No service types configured'}))
+                return
+            
+            # Serve service schedules from cache
+            schedules = {}
+            for service_type in service_types:
+                service_type_id = service_type['id']
+                schedule = planning_center.get_cached_daily_schedule(service_type_id)
+                schedules[service_type_id] = schedule
+            
+            self.write(json.dumps({'schedules': schedules}))
+            
+        except Exception as e:
+            logging.error(f"Schedule handler error: {e}")
+            self.set_status(500)
+            self.write(json.dumps({'error': str(e)}))
+
+
+class LiveScheduleHandler(web.RequestHandler):
+    """Handler for getting 24-hour live service schedules."""
+    def get(self):
+        try:
+            import planning_center
+            import config
+            
+            # Get PCO configuration
+            pco_config = config.config_tree.get('integrations', {}).get('planning_center', {})
+            if not pco_config:
+                self.write(json.dumps({'live_schedules': {}, 'message': 'No PCO configuration'}))
+                return
+            
+            service_types = pco_config.get('service_types', [])
+            lead_time_hours = pco_config.get('lead_time_hours', 2)
+            days = int(self.get_argument('days', '1'))
+            
+            if not service_types:
+                self.write(json.dumps({'live_schedules': {}, 'message': 'No service types configured'}))
+                return
+            
+            # Serve from cache to avoid blocking network calls
+            live_schedules = {}
+            for service_type in service_types:
+                service_type_id = service_type['id']
+                live_schedule = planning_center.get_cached_daily_schedule(service_type_id)
+                live_schedules[service_type_id] = live_schedule
+            
+            # Add current time for reference
+            current_time = datetime.now(timezone.utc).astimezone().isoformat()
+            
+            self.write(json.dumps({
+                'live_schedules': live_schedules,
+                'current_time': current_time,
+                'lead_time_hours': lead_time_hours,
+                'days': days
+            }))
+            
+        except Exception as e:
+            logging.error(f"Live schedule handler error: {e}")
+            self.set_status(500)
+            self.write(json.dumps({'error': str(e)}))
+
+
+class PCOTestParametersHandler(web.RequestHandler):
+    """Handler for testing different PCO API parameters."""
+    def get(self):
+        try:
+            import planning_center
+            import config
+            import requests
+            from datetime import datetime, timezone, timedelta
+            
+            # Get PCO configuration
+            pco_config = config.config_tree.get('integrations', {}).get('planning_center', {})
+            if not pco_config:
+                self.write(json.dumps({'error': 'No PCO configuration'}))
+                return
+            
+            service_types = pco_config.get('service_types', [])
+            if not service_types:
+                self.write(json.dumps({'error': 'No service types configured'}))
+                return
+            
+            # Test different parameters
+            test_results = {}
+            
+            for service_type in service_types:
+                service_type_id = service_type['id']
+                service_type_name = service_type.get('name', f'Service {service_type_id}')
+                
+                # Get PCO session
+                session = planning_center.get_pco_session()
+                if not session:
+                    test_results[service_type_id] = {'error': 'No PCO session'}
+                    continue
+                
+                # Test different filter parameters
+                test_params = {
+                    'filter=future': {'filter': 'future', 'order': 'sort_date', 'per_page': 10},
+                    'filter=upcoming': {'filter': 'upcoming', 'order': 'sort_date', 'per_page': 10},
+                    'no_filter': {'order': 'sort_date', 'per_page': 10},
+                    'filter=today': {'filter': 'today', 'order': 'sort_date', 'per_page': 10},
+                    'filter=this_week': {'filter': 'this_week', 'order': 'sort_date', 'per_page': 10}
+                }
+                
+                service_results = {}
+                
+                for param_name, params in test_params.items():
+                    try:
+                        url = f"{planning_center.PCO_API_BASE}/service_types/{service_type_id}/plans"
+                        response = session.get(url, params=params)
+                        response.raise_for_status()
+                        data = response.json()
+                        
+                        plans = data.get('data', [])
+                        plan_summaries = []
+                        
+                        for plan in plans[:5]:  # Show first 5 plans
+                            plan_summaries.append({
+                                'id': plan['id'],
+                                'title': plan['attributes']['title'],
+                                'dates': plan['attributes']['dates'],
+                                'sort_date': plan['attributes']['sort_date']
+                            })
+                        
+                        service_results[param_name] = {
+                            'total_plans': len(plans),
+                            'plans': plan_summaries,
+                            'api_url': f"{url}?{requests.compat.urlencode(params)}"
+                        }
+                        
+                    except Exception as e:
+                        service_results[param_name] = {'error': str(e)}
+                
+                test_results[service_type_id] = {
+                    'service_name': service_type_name,
+                    'results': service_results
+                }
+            
+            # Add current time for reference
+            current_time = datetime.now(timezone.utc).astimezone().isoformat()
+            
+            self.write(json.dumps({
+                'test_results': test_results,
+                'current_time': current_time,
+                'note': 'Testing different PCO API filter parameters'
+            }, indent=2))
+            
+        except Exception as e:
+            logging.error(f"PCO test parameters handler error: {e}")
+            self.set_status(500)
+            self.write(json.dumps({'error': str(e)}))
+
+
+class LiveServiceHandler(web.RequestHandler):
+    """Handler for getting current live service information."""
+    def get(self):
+        try:
+            import planning_center
+            import config
+            
+            # Get PCO configuration
+            pco_config = config.config_tree.get('integrations', {}).get('planning_center', {})
+            if not pco_config:
+                self.write(json.dumps({'live_service': None, 'message': 'No PCO configuration'}))
+                return
+            
+            service_types = pco_config.get('service_types', [])
+            if not service_types:
+                self.write(json.dumps({'live_service': None, 'message': 'No service types configured'}))
+                return
+            
+            # Find live service across all configured service types
+            live_service = None
+            lead_time_hours = pco_config.get('lead_time_hours', 2)
+            for service_type in service_types:
+                service_type_id = service_type['id']
+                live_plan = planning_center.find_live_plan(service_type_id, lead_time_hours)
+                if live_plan:
+                    # Handle null title by using a fallback
+                    title = live_plan.get('title')
+                    if not title:
+                        # Try to get service type name or use a generic title
+                        title = f"Service {service_type_id}"
+                    
+                    # Convert datetime objects to ISO format strings
+                    start_time_str = None
+                    end_time_str = None
+                    
+                    if live_plan.get('start_time'):
+                        if hasattr(live_plan['start_time'], 'isoformat'):
+                            start_time_str = live_plan['start_time'].isoformat()
+                        else:
+                            start_time_str = str(live_plan['start_time'])
+                    
+                    if live_plan.get('end_time'):
+                        if hasattr(live_plan['end_time'], 'isoformat'):
+                            end_time_str = live_plan['end_time'].isoformat()
+                        else:
+                            end_time_str = str(live_plan['end_time'])
+                    
+                    live_service = {
+                        'service_type_id': service_type_id,
+                        'plan_id': live_plan['id'],
+                        'title': title,
+                        'dates': live_plan['dates'],
+                        'start_time': start_time_str,
+                        'end_time': end_time_str
+                    }
+                    break
+            
+            if live_service:
+                self.write(json.dumps({'live_service': live_service}))
+            else:
+                self.write(json.dumps({'live_service': None, 'message': 'No live service found'}))
+                
+        except Exception as e:
+            logging.error(f"Live service handler error: {e}")
+            self.set_status(500)
+            self.write(json.dumps({'error': str(e)}))
+
+
+class PCOTestPlansHandler(web.RequestHandler):
+    """Handler for testing plans for a specific service type."""
+    def get(self):
+        try:
+            import planning_center
+            import config
+            
+            service_type_id = self.get_argument('service_type_id', '769651')
+            
+            session = planning_center.get_pco_session()
+            if not session:
+                self.write(json.dumps({'error': 'No PCO session'}))
+                return
+            
+            # Get plans for this service type
+            url = f"{planning_center.PCO_API_BASE}/service_types/{service_type_id}/plans"
+            params = {
+                'filter': 'future',
+                'order': 'sort_date',
+                'per_page': 10
+            }
+            response = session.get(url, params=params)
+            response.raise_for_status()
+            data = response.json()
+            
+            plans = data.get('data', [])
+            result = {
+                'service_type_id': service_type_id,
+                'plans': []
+            }
+            
+            for plan in plans:
+                plan_id = plan['id']
+                plan_title = plan['attributes']['title']
+                plan_dates = plan['attributes']['dates']
+                
+                # Get first service time
+                times_url = f"{planning_center.PCO_API_BASE}/service_types/{service_type_id}/plans/{plan_id}/plan_times"
+                times_response = session.get(times_url)
+                times_response.raise_for_status()
+                times_data = times_response.json()
+                
+                if times_data.get('data'):
+                    # Find the earliest time in the plan (including rehearsal times)
+                    earliest_time = None
+                    for time_item in times_data['data']:
+                        time_str = time_item['attributes']['starts_at']
+                        from dateutil import parser as date_parser
+                        from datetime import datetime, timezone, timedelta
+                        time_obj = date_parser.parse(time_str)
+                        
+                        # Convert from UTC to local time if needed
+                        if time_obj.tzinfo is not None and time_obj.tzinfo.utcoffset(time_obj) is not None:
+                            # Time has timezone info, convert to local time
+                            time_obj = time_obj.astimezone()
+                        
+                        if earliest_time is None or time_obj < earliest_time:
+                            earliest_time = time_obj
+                    
+                    start_time = earliest_time
+                    now = datetime.now(timezone.utc)
+                    lead_time_hours = 2
+                    lead_time_start = start_time - timedelta(hours=lead_time_hours)
+                    
+                    # Find the next service time or end of day, whichever comes first
+                    next_service_time = None
+                    for time_item in times_data['data']:
+                        time_str = time_item['attributes']['starts_at']
+                        time_obj = date_parser.parse(time_str)
+                        
+                        # Convert from UTC to local time if needed
+                        if time_obj.tzinfo is not None and time_obj.tzinfo.utcoffset(time_obj) is not None:
+                            # Time has timezone info, convert to local time
+                            time_obj = time_obj.astimezone()
+                        
+                        if time_obj > start_time:  # This is a later time in the same plan
+                            if next_service_time is None or time_obj < next_service_time:
+                                next_service_time = time_obj
+                    
+                    # For live services, extend the window to cover the full service duration
+                    # Use end of day (midnight of the same day) to ensure the service stays live
+                    live_end = start_time.replace(hour=23, minute=59, second=59, microsecond=999999)
+                    
+                    is_live = lead_time_start <= now <= live_end
+                    
+                    result['plans'].append({
+                        'id': plan_id,
+                        'title': plan_title,
+                        'dates': plan_dates,
+                        'start_time': start_time.isoformat(),
+                        'current_time': now.isoformat(),
+                        'lead_time_start': lead_time_start.isoformat(),
+                        'live_end': live_end.isoformat(),
+                        'is_live': is_live
+                    })
+            
+            self.write(json.dumps(result, indent=2))
+            
+        except Exception as e:
+            logging.error(f"PCO test plans error: {e}")
+            self.set_status(500)
+            self.write(json.dumps({'error': str(e)}))
+
+
+class PCORefreshStructureHandler(web.RequestHandler):
+    """Handler for refreshing PCO structure (teams and positions)."""
+    def post(self):
+        try:
+            logging.info("PCO structure refresh triggered")
+            
+            # Get current PCO config
+            pco_config = config.config_tree.get('integrations', {}).get('planning_center', {})
+            service_types = pco_config.get('service_types', [])
+            
+            if not service_types:
+                self.set_status(400)
+                self.write(json.dumps({'status': 'error', 'message': 'No service types configured'}))
+                return
+            
+            # Build structure for each service type
+            updated_service_types = []
+            
+            for service_type in service_types:
+                service_type_id = service_type['id']
+                # Building structure for service type
+                
+                # Get teams and positions for this service type
+                teams = planning_center.get_teams_for_service_type(service_type_id)
+                
+                # Build updated service type structure
+                updated_service_type = {
+                    'id': service_type_id,
+                    'name': service_type.get('name', f'Service Type {service_type_id}'),
+                    'teams': teams
+                }
+                updated_service_types.append(updated_service_type)
+            
+            # Update the config with the new structure
+            pco_config['service_types'] = updated_service_types
+            config.config_tree['integrations']['planning_center'] = pco_config
+            config.save_config()
+            
+            logging.info("PCO structure refresh completed successfully")
+            self.write(json.dumps({
+                'status': 'success', 
+                'message': 'PCO structure refreshed successfully',
+                'service_types': updated_service_types
+            }))
+            
+        except Exception as e:
+            logging.error(f"PCO structure refresh error: {e}")
+            self.set_status(500)
+            self.write(json.dumps({'error': str(e)}))
+
+
+class PCOForceRefreshScheduleHandler(web.RequestHandler):
+    """Handler for forcing a refresh of the PCO schedule cache."""
+    def post(self):
+        try:
+            logging.info("PCO force refresh schedule triggered")
+            import planning_center
+            
+            # Force refresh the schedule cache
+            planning_center.force_refresh_schedule_cache()
+            
+            self.write(json.dumps({'status': 'success', 'message': 'Schedule cache refreshed'}))
+        except Exception as e:
+            logging.error(f"PCO force refresh schedule error: {e}")
+            self.set_status(500)
+            self.write(json.dumps({'status': 'error', 'message': str(e)}))
+
+
+class PCOCacheStatusHandler(web.RequestHandler):
+    """Handler for checking PCO schedule cache status."""
+    def get(self):
+        try:
+            import planning_center
+            
+            # Get cache status
+            cache_info = planning_center._schedule_cache
+            if cache_info:
+                self.write(json.dumps({
+                    'status': 'success',
+                    'cache_info': {
+                        'generated_at': cache_info.get('generated_at', '').isoformat() if cache_info.get('generated_at') else None,
+                        'days': cache_info.get('days', 0),
+                        'service_types': list(cache_info.get('daily_schedules', {}).keys())
+                    }
+                }))
+            else:
+                self.write(json.dumps({
+                    'status': 'success',
+                    'cache_info': {
+                        'generated_at': None,
+                        'days': 0,
+                        'service_types': []
+                    }
+                }))
+        except Exception as e:
+            logging.error(f"PCO cache status error: {e}")
+            self.set_status(500)
+            self.write(json.dumps({'status': 'error', 'message': str(e)}))
+
+
+class PCOHealthCheckHandler(web.RequestHandler):
+    """Simple health check for PCO endpoints."""
+    def get(self):
+        try:
+            self.write(json.dumps({
+                'status': 'success',
+                'message': 'PCO endpoints are working',
+                'timestamp': datetime.now(timezone.utc).isoformat()
+            }))
+        except Exception as e:
+            logging.error(f"PCO health check error: {e}")
+            self.set_status(500)
+            self.write(json.dumps({'status': 'error', 'message': str(e)}))
+
+
+class PCOSetManualPlanHandler(web.RequestHandler):
+    """Handler for setting a manual plan selection."""
+    def post(self):
+        try:
+            import planning_center
+            
+            data = json.loads(self.request.body.decode('utf-8'))
+            plan_id = data.get('plan_id')
+            
+            if not plan_id:
+                self.set_status(400)
+                self.write(json.dumps({'status': 'error', 'message': 'plan_id is required'}))
+                return
+            
+            # Check if there's currently a scheduled service that should be live
+            pco_config = config.config_tree.get('integrations', {}).get('planning_center', {})
+            service_types = pco_config.get('service_types', [])
+            lead_time_hours = pco_config.get('lead_time_hours', 2)
+            
+            has_scheduled_live = False
+            for st in service_types:
+                st_id = st['id']
+                live_plan = planning_center.find_live_plan(st_id, lead_time_hours)
+                if live_plan:
+                    has_scheduled_live = True
+                    break
+            
+            if has_scheduled_live:
+                self.set_status(400)
+                self.write(json.dumps({
+                    'status': 'error', 
+                    'message': 'Cannot set manual plan while a scheduled service is live'
+                }))
+                return
+            
+            # Set the manual plan selection
+            planning_center.set_manual_plan_selection(plan_id)
+            
+            # Just refresh the plan_of_day for the affected service types
+            # This is much faster than a full cache refresh
+            for st in service_types:
+                st_id = st['id']
+                try:
+                    pod = planning_center._build_plan_of_day_for_service(st_id, lead_time_hours)
+                    if pod:
+                        planning_center._update_plan_of_day_in_cache(st_id, pod)
+                except Exception as e:
+                    logging.error(f"Error updating plan_of_day for service type {st_id}: {e}")
+            
+            self.write(json.dumps({
+                'status': 'success',
+                'message': f'Manual plan {plan_id} set successfully'
+            }))
+            
+        except Exception as e:
+            logging.error(f"PCO set manual plan error: {e}")
+            self.set_status(500)
+            self.write(json.dumps({'status': 'error', 'message': str(e)}))
+
+
+class PCOClearManualPlanHandler(web.RequestHandler):
+    """Handler for clearing manual plan selection."""
+    def post(self):
+        try:
+            import planning_center
+            
+            # Clear the manual plan selection
+            planning_center.set_manual_plan_selection(None)
+            
+            # Just refresh the plan_of_day for all service types
+            # This is much faster than a full cache refresh
+            pco_config = config.config_tree.get('integrations', {}).get('planning_center', {})
+            service_types = pco_config.get('service_types', [])
+            lead_time_hours = pco_config.get('lead_time_hours', 2)
+            
+            for st in service_types:
+                st_id = st['id']
+                try:
+                    pod = planning_center._build_plan_of_day_for_service(st_id, lead_time_hours)
+                    if pod:
+                        planning_center._update_plan_of_day_in_cache(st_id, pod)
+                except Exception as e:
+                    logging.error(f"Error updating plan_of_day for service type {st_id}: {e}")
+            
+            self.write(json.dumps({
+                'status': 'success',
+                'message': 'Manual plan selection cleared'
+            }))
+            
+        except Exception as e:
+            logging.error(f"PCO clear manual plan error: {e}")
+            self.set_status(500)
+            self.write(json.dumps({'status': 'error', 'message': str(e)}))
+
+
+class PCODebugHandler(web.RequestHandler):
+    """Handler for debugging PCO plans and assignments."""
+    def get(self):
+        try:
+            import planning_center
+            import config
+            
+            # Get PCO configuration
+            pco_config = config.config_tree.get('integrations', {}).get('planning_center', {})
+            if not pco_config:
+                self.write(json.dumps({'error': 'No PCO configuration found'}))
+                return
+            
+            service_types_config = pco_config.get('service_types', [])
+            lead_time_hours = pco_config.get('lead_time_hours', 2)
+            
+            debug_info = {
+                'service_types': [],
+                'all_service_types': [],
+                'plans': [],
+                'assignments': []
+            }
+            
+            # First, get ALL service types to find NORTH GEORGIA REVIVAL
+            session = planning_center.get_pco_session()
+            if session:
+                all_service_types_response = session.get(f"{planning_center.PCO_API_BASE}/service_types")
+                all_service_types_response.raise_for_status()
+                all_service_types_data = all_service_types_response.json()
+                
+                for service_type in all_service_types_data.get('data', []):
+                    service_type_id = service_type['id']
+                    service_type_name = service_type['attributes']['name']
+                    
+                    # Just list service types for now, don't check plans to avoid rate limiting
+                    all_service_info = {
+                        'id': service_type_id,
+                        'name': service_type_name
+                    }
+                    debug_info['all_service_types'].append(all_service_info)
+            
+            # Now process configured service types
+            for service_type_config in service_types_config:
+                service_type_id = service_type_config['id']
+                service_info = {
+                    'id': service_type_id,
+                    'reuse_rules': service_type_config.get('reuse_rules', [])
+                }
+                
+                # Find live plan
+                plan = planning_center.find_live_plan(service_type_id, lead_time_hours)
+                if plan:
+                    service_info['live_plan'] = plan
+                    
+                    # Get team members for this plan
+                    session = planning_center.get_pco_session()
+                    if session:
+                        url = f"{planning_center.PCO_API_BASE}/service_types/{service_type_id}/plans/{plan['id']}/team_members"
+                        params = {'include': 'person,team_position'}
+                        response = session.get(url, params=params)
+                        response.raise_for_status()
+                        data = response.json()
+                        
+                        team_members = []
+                        for member in data.get('data', []):
+                            status = member['attributes']['status']
+                            position_name = member['attributes'].get('team_position_name', '')
+                            
+                            # Get team name
+                            team_ref = member['relationships'].get('team', {}).get('data')
+                            team_name = 'Unknown'
+                            if team_ref:
+                                team_id = team_ref['id']
+                                teams_url = f"{planning_center.PCO_API_BASE}/teams/{team_id}"
+                                team_response = session.get(teams_url)
+                                team_response.raise_for_status()
+                                team_data = team_response.json()
+                                team_name = team_data['data']['attributes']['name']
+                            
+                            # Get person name
+                            person_name = 'Unknown'
+                            person_ref = member['relationships']['person']['data']
+                            person_key = f"{person_ref['type']}-{person_ref['id']}"
+                            
+                            included = {}
+                            for item in data.get('included', []):
+                                key = f"{item['type']}-{item['id']}"
+                                included[key] = item
+                            
+                            person_data = included.get(person_key)
+                            if person_data:
+                                person_name = person_data['attributes'].get('name') or person_data['attributes'].get('full_name', 'Unknown')
+                            
+                            team_members.append({
+                                'team': team_name,
+                                'position': position_name,
+                                'person': person_name,
+                                'status': status
+                            })
+                        
+                        service_info['team_members'] = team_members
+                else:
+                    service_info['live_plan'] = None
+                
+                debug_info['service_types'].append(service_info)
+            
+            self.write(json.dumps(debug_info, indent=2))
+            
+        except Exception as e:
+            logging.error(f"PCO debug error: {e}")
+            self.set_status(500)
+            self.write(json.dumps({'error': str(e)}))
+
+
+
+
+
+
+
+
+class DriveAuthHandler(web.RequestHandler):
+    """Handler for Google Drive OAuth authorization."""
+    def get(self):
+        from google_auth_oauthlib.flow import Flow
+        
+        # Get current credentials
+        client_id, client_secret = google_drive.get_google_credentials()
+        
+        if not client_id or not client_secret:
+            self.set_status(400)
+            self.write('''
+                <html><body>
+                <h2>Google Drive OAuth Setup Required</h2>
+                <p>Google OAuth credentials are not configured.</p>
+                <p>Please:</p>
+                <ol>
+                    <li>Go to the Integrations settings</li>
+                    <li>Enter your Google Client ID and Client Secret</li>
+                    <li>Save the credentials</li>
+                    <li>Then try authorizing Google Drive again</li>
+                </ol>
+                <p><a href="javascript:window.close()">Close this window</a></p>
+                </body></html>
+            ''')
+            return
+        
+        flow = Flow.from_client_config(
+            {
+                'web': {
+                    'client_id': client_id,
+                    'client_secret': client_secret,
+                    'auth_uri': 'https://accounts.google.com/o/oauth2/auth',
+                    'token_uri': 'https://oauth2.googleapis.com/token',
+                    'redirect_uris': [google_drive.GOOGLE_REDIRECT_URI]
+                }
+            },
+            scopes=google_drive.GOOGLE_SCOPES
+        )
+        
+        flow.redirect_uri = google_drive.GOOGLE_REDIRECT_URI
+        
+        authorization_url, state = flow.authorization_url(
+            access_type='offline',
+            include_granted_scopes='true'
+        )
+        
+        # Store state in cookie for verification
+        self.set_secure_cookie('drive_oauth_state', state)
+        
+        self.redirect(authorization_url)
+
+
+class DriveCallbackHandler(web.RequestHandler):
+    """Handler for Google Drive OAuth callback."""
+    def get(self):
+        from google_auth_oauthlib.flow import Flow
+        
+        # Verify state
+        state = self.get_secure_cookie('drive_oauth_state')
+        if not state or state.decode('utf-8') != self.get_argument('state', ''):
+            self.set_status(400)
+            self.write('Invalid state parameter')
+            return
+        
+        code = self.get_argument('code', '')
+        if not code:
+            self.set_status(400)
+            self.write('No authorization code received')
+            return
+        
+        try:
+            # Get current credentials
+            client_id, client_secret = google_drive.get_google_credentials()
+            
+            flow = Flow.from_client_config(
+                {
+                    'web': {
+                        'client_id': client_id,
+                        'client_secret': client_secret,
+                        'auth_uri': 'https://accounts.google.com/o/oauth2/auth',
+                        'token_uri': 'https://oauth2.googleapis.com/token',
+                        'redirect_uris': [google_drive.GOOGLE_REDIRECT_URI]
+                    }
+                },
+                scopes=google_drive.GOOGLE_SCOPES,
+                state=state.decode('utf-8')
+            )
+            
+            flow.redirect_uri = google_drive.GOOGLE_REDIRECT_URI
+            flow.fetch_token(code=code)
+            
+            credentials = flow.credentials
+            
+            # Save tokens to config
+            if 'integrations' not in config.config_tree:
+                config.config_tree['integrations'] = {}
+            if 'google_drive' not in config.config_tree['integrations']:
+                config.config_tree['integrations']['google_drive'] = {}
+            
+            config.config_tree['integrations']['google_drive']['tokens'] = {
+                'access_token': credentials.token,
+                'refresh_token': credentials.refresh_token
+            }
+            config.save_current_config()
+            
+            # Start sync thread
+            google_drive.start_sync_thread()
+            
+            self.write('''
+                <html><body>
+                <h2>Google Drive Authorization Successful!</h2>
+                <p>You can close this window and return to Micboard.</p>
+                <script>
+                    if (window.opener) {
+                        window.opener.postMessage({type: 'drive_auth_success'}, '*');
+                        window.close();
+                    }
+                </script>
+                </body></html>
+            ''')
+            
+        except Exception as e:
+            logging.error(f"Drive OAuth error: {e}")
+            self.set_status(500)
+            self.write(f'Authorization failed: {str(e)}')
+
+
+class DriveFoldersHandler(web.RequestHandler):
+    """Handler for fetching Google Drive folders."""
+    def get(self):
+        try:
+            # Check if OAuth credentials are configured
+            client_id, client_secret = google_drive.get_google_credentials()
+            if not client_id or not client_secret:
+                self.set_status(400)
+                self.write(json.dumps({'error': 'Google OAuth credentials not configured. Please set up Google Client ID and Client Secret in the integrations settings.'}))
+                return
+            
+            service = google_drive.get_drive_service()
+            if not service:
+                self.set_status(401)
+                self.write(json.dumps({'error': 'Google Drive not authorized. Please authorize Google Drive access first.'}))
+                return
+            
+            # Query for folders only
+            query = "mimeType = 'application/vnd.google-apps.folder' and trashed = false"
+            results = service.files().list(
+                q=query,
+                fields="files(id, name, parents)",
+                pageSize=1000,
+                orderBy="name"
+            ).execute()
+            
+            folders = results.get('files', [])
+            
+            # Format for frontend
+            folder_list = []
+            for folder in folders:
+                folder_list.append({
+                    'id': folder['id'],
+                    'name': folder['name'],
+                    'has_parent': 'parents' in folder
+                })
+            
+            self.set_header('Content-Type', 'application/json')
+            self.write(json.dumps({'folders': folder_list}))
+            
+        except Exception as e:
+            logging.error(f"Error fetching Drive folders: {e}")
+            self.set_status(500)
+            self.write(json.dumps({'error': str(e)}))
+
+
+class DriveFilesStatusHandler(web.RequestHandler):
+    """Handler for fetching Google Drive files sync status."""
+    def get(self):
+        try:
+            folder_id = self.get_argument('folder_id', '')
+            if not folder_id:
+                self.set_status(400)
+                self.write(json.dumps({'error': 'Folder ID required'}))
+                return
+            
+            # Check if OAuth credentials are configured
+            client_id, client_secret = google_drive.get_google_credentials()
+            if not client_id or not client_secret:
+                self.set_status(400)
+                self.write(json.dumps({'error': 'Google OAuth credentials not configured. Please set up Google Client ID and Client Secret in the integrations settings.'}))
+                return
+            
+            service = google_drive.get_drive_service()
+            if not service:
+                self.set_status(401)
+                self.write(json.dumps({'error': 'Google Drive not authorized. Please authorize Google Drive access first.'}))
+                return
+            
+            # Get files from the specified folder
+            query = f"'{folder_id}' in parents and trashed = false and ("
+            query += "mimeType contains 'image/' or mimeType = 'video/mp4')"
+            
+            results = service.files().list(
+                q=query,
+                fields="files(id, name, mimeType, modifiedTime)",
+                pageSize=1000,
+                orderBy="name"
+            ).execute()
+            
+            files = results.get('files', [])
+            
+            # Get current sync state
+            last_file_state = google_drive.get_last_file_state()
+            downloading_files = google_drive.get_downloading_files()
+            
+            # Format for frontend
+            file_status_list = []
+            for file in files:
+                file_id = file['id']
+                original_name = file['name']
+                mime_type = file['mimeType']
+                modified_time = file['modifiedTime']
+                
+                # Determine local name (same logic as sync function)
+                csv_mappings = google_drive.get_csv_mapping(service, folder_id)
+                if original_name in csv_mappings:
+                    local_name = csv_mappings[original_name]
+                else:
+                    local_name = os.path.splitext(original_name)[0]
+                
+                # Check sync status
+                status = 'not_synced'  # red x
+                if local_name.lower() in downloading_files:
+                    status = 'downloading'  # rotating arrows
+                elif local_name.lower() in last_file_state:
+                    if last_file_state[local_name.lower()]['modified'] == modified_time:
+                        status = 'synced'  # green check
+                    else:
+                        status = 'outdated'  # yellow warning
+                
+                file_status_list.append({
+                    'id': file_id,
+                    'name': original_name,
+                    'local_name': local_name,
+                    'mime_type': mime_type,
+                    'modified_time': modified_time,
+                    'status': status
+                })
+            
+            self.set_header('Content-Type', 'application/json')
+            self.write(json.dumps({'files': file_status_list}))
+            
+        except Exception as e:
+            logging.error(f"Error fetching Drive files status: {e}")
+            self.set_status(500)
+            self.write(json.dumps({'error': str(e)}))
+
+
+class IntegrationsConfigHandler(web.RequestHandler):
+    """Handler for saving integrations configuration."""
+    def get(self):
+        self.set_header('Content-Type', 'application/json')
+        integrations = config.config_tree.get('integrations', {})
+        self.write(json.dumps(integrations))
+    
+    def post(self):
+        data = json.loads(self.request.body)
+        
+        if 'integrations' not in config.config_tree:
+            config.config_tree['integrations'] = {}
+        
+        # Update config
+        config.config_tree['integrations'].update(data)
+        config.save_current_config()
+        
+        # Restart sync threads if needed
+        if 'planning_center' in data:
+            planning_center.stop_sync_thread()
+            if config.config_tree['integrations']['planning_center'].get('tokens', {}).get('access_token'):
+                planning_center.start_sync_thread()
+        
+        if 'google_drive' in data:
+            google_drive.stop_sync_thread()
+            if config.config_tree['integrations']['google_drive'].get('tokens', {}).get('access_token'):
+                google_drive.start_sync_thread()
+        
+        self.write(json.dumps({'status': 'success'}))
+
+
+class ConfigCleanupHandler(web.RequestHandler):
+    """Handler for cleaning up duplicate configuration sections."""
+    def post(self):
+        try:
+            # Trigger cleanup and save
+            config.cleanup_duplicate_pco_config()
+            config.save_current_config()
+            
+            self.write(json.dumps({'success': True, 'message': 'Configuration cleaned up successfully'}))
+        except Exception as e:
+            self.set_status(500)
+            self.write(json.dumps({'error': str(e)}))
+
+
+class OAuthCredentialsHandler(web.RequestHandler):
+    """Handler for saving OAuth credentials."""
+    def post(self):
+        try:
+            data = json.loads(self.request.body)
+            
+            # Debug logging
+            logging.debug(f"OAuth Credentials - PCO Client ID: {data.get('pco_client_id', '')[:10]}... (length: {len(data.get('pco_client_id', ''))})")
+            logging.debug(f"OAuth Credentials - PCO Client Secret: {'*' * len(data.get('pco_client_secret', ''))} (length: {len(data.get('pco_client_secret', ''))})")
+            logging.debug(f"OAuth Credentials - Google Client ID: {data.get('google_client_id', '')[:10]}... (length: {len(data.get('google_client_id', ''))})")
+            logging.debug(f"OAuth Credentials - Google Client Secret: {'*' * len(data.get('google_client_secret', ''))} (length: {len(data.get('google_client_secret', ''))})")
+            
+            # Store credentials in environment variables for this session
+            if data.get('pco_client_id'):
+                os.environ['PCO_CLIENT_ID'] = data['pco_client_id']
+            if data.get('pco_client_secret'):
+                os.environ['PCO_CLIENT_SECRET'] = data['pco_client_secret']
+            if data.get('google_client_id'):
+                os.environ['GOOGLE_CLIENT_ID'] = data['google_client_id']
+            if data.get('google_client_secret'):
+                os.environ['GOOGLE_CLIENT_SECRET'] = data['google_client_secret']
+            
+            # Also store in config for persistence
+            if 'oauth_credentials' not in config.config_tree:
+                config.config_tree['oauth_credentials'] = {}
+            
+            config.config_tree['oauth_credentials'].update({
+                'pco_client_id': data.get('pco_client_id', ''),
+                'pco_client_secret': data.get('pco_client_secret', ''),
+                'google_client_id': data.get('google_client_id', ''),
+                'google_client_secret': data.get('google_client_secret', '')
+            })
+            
+            config.save_current_config()
+            
+            self.write(json.dumps({'success': True}))
+        except Exception as e:
+            self.set_status(500)
+            self.write(json.dumps({'error': str(e)}))
 
 
 
@@ -162,6 +1313,12 @@ class NoCacheHandler(web.StaticFileHandler):
 
 
 def twisted():
+    # Initialize the new PCO scheduler on startup
+    try:
+        pco_endpoints.init_pco_scheduler()
+    except Exception as e:
+        logging.error(f"Failed to initialize PCO scheduler: {e}")
+    
     app = web.Application([
         (r'/', IndexHandler),
         (r'/about', AboutHandler),
@@ -170,12 +1327,57 @@ def twisted():
         (r'/api/group', GroupUpdateHandler),
         (r'/api/slot', SlotHandler),
         (r'/api/config', ConfigHandler),
+        (r'/api/integrations', IntegrationsConfigHandler),
+        (r'/api/oauth-credentials', OAuthCredentialsHandler),
+        (r'/api/pco/service-types', PCOServiceTypesHandler),
+        (r'/api/pco/teams', PCOTeamsHandler),
+        (r'/api/pco/positions', PCOPositionsHandler),
+        (r'/api/pco/authorize', PCOAuthHandler),
+        (r'/api/pco/sync', PCOSyncHandler),
+        (r'/api/pco/reset', PCOResetHandler),
+        (r'/api/pco/refresh-structure', PCORefreshStructureHandler),
+        (r'/api/pco/force-refresh-schedule', PCOForceRefreshScheduleHandler),
+        (r'/api/pco/cache-status', PCOCacheStatusHandler),
+        (r'/api/pco/health', PCOHealthCheckHandler),
+        (r'/api/pco/set-manual-plan', pco_endpoints.PCOSetManualPlanHandler),
+        (r'/api/pco/clear-manual-plan', pco_endpoints.PCOClearManualPlanHandler),
+        (r'/api/pco/debug', PCODebugHandler),
+        
+        # New simplified PCO endpoints
+        (r'/api/pco/upcoming-plans', pco_endpoints.PCOUpcomingPlansHandler),
+        (r'/api/pco/current-plan', pco_endpoints.PCOCurrentPlanHandler),
+        (r'/api/pco/refresh-schedule', pco_endpoints.PCORefreshScheduleHandler),
+        (r'/api/pco/test-plans', PCOTestPlansHandler),
+        (r'/api/schedule', ScheduleHandler),
+        (r'/api/live-schedule', LiveScheduleHandler),
+        (r'/api/pco/test-parameters', PCOTestParametersHandler),
+        (r'/api/live-service', LiveServiceHandler),
+        (r'/api/drive/authorize', DriveAuthHandler),
+        (r'/api/drive/callback', DriveCallbackHandler),
+        (r'/api/drive/folders', DriveFoldersHandler),
+        (r'/api/drive/files-status', DriveFilesStatusHandler),
+        (r'/api/config/cleanup', ConfigCleanupHandler),
         # (r'/restart/', MicboardReloadConfigHandler),
         (r'/static/(.*)', web.StaticFileHandler, {'path': config.app_dir('static')}),
         (r'/bg/(.*)', NoCacheHandler, {'path': config.get_gif_dir()})
-    ])
+    ], cookie_secret=os.environ.get('COOKIE_SECRET', secrets.token_hex(32)))
     # https://github.com/tornadoweb/tornado/issues/2308
     asyncio.set_event_loop(asyncio.new_event_loop())
     app.listen(config.web_port())
     ioloop.PeriodicCallback(SocketHandler.ws_dump, 50).start()
+    
+    # Start Planning Center threads if credentials are available (env or config)
+    try:
+        pco_client_id, pco_client_secret = planning_center.get_pco_credentials()
+        if pco_client_id and pco_client_secret:
+            planning_center.start_sync_thread()
+            planning_center.start_schedule_cache_thread(days=8)
+        else:
+            logging.info("PCO credentials not configured; skipping Planning Center threads")
+    except Exception as e:
+        logging.error(f"Failed to start Planning Center threads: {e}")
+    
+    if config.config_tree.get('integrations', {}).get('google_drive', {}).get('tokens', {}).get('access_token'):
+        google_drive.start_sync_thread()
+    
     ioloop.IOLoop.instance().start()

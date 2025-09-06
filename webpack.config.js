@@ -11,10 +11,19 @@ module.exports = {
     about: ['./js/about.js'],
     venue: ['./js/venues.js'],
     web: ['./js/web.js'],
+    integrations: ['./js/integrations.js'],
   },
   output: {
     path: path.resolve(__dirname, 'static'),
     filename: '[name].js',
+  },
+  resolve: {
+    fallback: {
+      "buffer": false,
+      "crypto": false,
+      "stream": false,
+      "util": false
+    }
   },
   plugins: [
     new webpack.ProvidePlugin({
@@ -44,25 +53,22 @@ module.exports = {
           loader: 'sass-loader',
           options: {
             sourceMap: true,
+            implementation: require('sass'),
           },
         }],
       },
       {
         test: /\.(woff(2)?|ttf|eot|svg)(\?v=\d+\.\d+\.\d+)?$/,
-        use: [{
-          loader: 'file-loader',
-          options: {
-            name: '[name].[ext]',
-            outputPath: 'fonts/',
-            publicPath: 'static/fonts/',
-          },
-        }],
+        type: 'asset/resource',
+        generator: {
+          filename: 'fonts/[name][ext]'
+        }
       },
       {
         test: /.jsx?$/,
         loader: 'babel-loader',
         exclude: /node_modules/,
-        query: {
+        options: {
           presets: ['@babel/preset-env', '@babel/preset-react'],
           // presets: ['env', 'react']
         },

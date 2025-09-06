@@ -1,7 +1,7 @@
 'use strict';
 
 import 'whatwg-fetch';
-import { dataURL, ActivateMessageBoard, micboard, updateNavLinks } from './app.js';
+import { dataURL, ActivateMessageBoard, micboard, updateNavLinks, dataFilterFromList } from './app.js';
 import { renderGroup, updateSlot } from './channelview.js';
 import { updateChart } from './chart-smoothie.js';
 
@@ -23,21 +23,29 @@ export function postJSON(url, data, callback) {
     .catch(error => console.error('Error:', error));
 }
 
-function JsonUpdate() {
-  fetch(dataURL)
+export function JsonUpdate() {
+  return fetch(dataURL)
     .then(response => response.json())
     .then((data) => {
       if (micboard.connectionStatus === 'DISCONNECTED') {
         window.location.reload();
       }
+      // Update live slots
       data.receivers.forEach((rx) => {
         rx.tx.forEach(updateSlot);
       });
+      // Rebuild transmitters from latest data when not in demo
+      if (micboard.url.demo !== 'true') {
+        micboard.transmitters = [];
+        dataFilterFromList(data);
+      }
       micboard.connectionStatus = 'CONNECTED';
       micboard.config = data.config;
+      return data;
     }).catch((error) => {
       console.log(error);
       micboard.connectionStatus = 'DISCONNECTED';
+      throw error;
     });
 }
 
@@ -53,8 +61,9 @@ function updateGroup(data) {
 }
 
 export function initLiveData() {
-  setInterval(JsonUpdate, 1000);
+  // Prefer websocket updates; reduce polling to a 5s fallback to cut load
   wsConnect();
+  setInterval(JsonUpdate, 5000);
 }
 
 function wsConnect() {

@@ -136,14 +136,25 @@ function GridLayout() {
 
 export function groupEditToggle() {
   const container = document.getElementsByClassName('container-fluid')[0];
+  const sidebar = document.querySelector('.sidebar');
+  
   if (container.classList.contains('sidebar-open')) {
     container.classList.remove('sidebar-open');
-    swappable.destroy();
+    if (sidebar) sidebar.style.display = 'none';
+    if (swappable) {
+      swappable.destroy();
+      swappable = null;
+    }
   } else {
     if (micboard.displayMode === 'tvmode') {
       toggleDisplayMode();
     }
     container.classList.add('sidebar-open');
+    if (sidebar) sidebar.style.display = 'block';
+    
+    // Update the sidebar with current group info
+    updateEditor(micboard.group);
+    
     GridLayout();
   }
 }

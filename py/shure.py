@@ -70,7 +70,19 @@ def SocketService():
         readrx = [rx for rx in NetworkDevices if rx.rx_com_status in ['CONNECTING', 'CONNECTED']]
         writerx = [rx for rx in readrx if not rx.writeQueue.empty()]
 
-        read_socks, write_socks, error_socks = select.select(readrx, writerx, readrx, .2)
+        # On Windows, select() requires actual socket objects or file descriptors
+        # The NetworkDevice objects have a fileno() method which returns the socket's file descriptor
+        try:
+            read_socks, write_socks, error_socks = select.select(readrx, writerx, readrx, .2)
+        except (ValueError, OSError) as e:
+            # If select fails, it might be because some sockets are invalid
+            # Filter out any devices that don't have valid sockets
+            readrx = [rx for rx in readrx if rx.f and rx.f.fileno() != -1]
+            writerx = [rx for rx in writerx if rx.f and rx.f.fileno() != -1]
+            if not readrx:
+                time.sleep(0.2)
+                continue
+            read_socks, write_socks, error_socks = select.select(readrx, writerx, readrx, .2)
 
         for rx in read_socks:
             try:

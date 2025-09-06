@@ -201,7 +201,24 @@ def write_json_config(data):
         json.dump(data, f, indent=2, separators=(',', ': '), sort_keys=True)
 
 def save_current_config():
+    # Clean up duplicate PCO sections before saving
+    cleanup_duplicate_pco_config()
     return write_json_config(config_tree)
+
+def cleanup_duplicate_pco_config():
+    """Remove duplicate PCO configuration sections."""
+    # Check if we have both 'pco' and 'integrations.planning_center'
+    if 'pco' in config_tree and config_tree.get('integrations', {}).get('planning_center'):
+        logging.info("Cleaning up duplicate PCO configuration - removing legacy 'pco' section")
+        # Remove the old 'pco' section
+        del config_tree['pco']
+    
+    # Also check for and remove any other duplicate PCO-related sections
+    legacy_keys = ['dropbox', 'google_drive']  # These are now under integrations
+    for key in legacy_keys:
+        if key in config_tree and config_tree.get('integrations', {}).get(key):
+            logging.info(f"Cleaning up duplicate {key} configuration - removing legacy section")
+            del config_tree[key]
 
 def get_group_by_number(group_number):
     for group in config_tree['groups']:
