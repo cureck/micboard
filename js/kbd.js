@@ -39,35 +39,15 @@ export function keybindings() {
       return;
     }
 
-    if (e.key === '0') {
-      renderGroup(0);
-    }
-    if (e.key === '1') {
-      renderGroup(1);
-    }
-    if (e.key === '2') {
-      renderGroup(2);
-    }
-    if (e.key === '3') {
-      renderGroup(3);
-    }
-    if (e.key === '4') {
-      renderGroup(4);
-    }
-    if (e.key === '5') {
-      renderGroup(5);
-    }
-    if (e.key === '6') {
-      renderGroup(6);
-    }
-    if (e.key === '7') {
-      renderGroup(7);
-    }
-    if (e.key === '8') {
-      renderGroup(8);
-    }
-    if (e.key === '9') {
-      renderGroup(9);
+    // Use consistent navigation for keyboard shortcuts
+    if (e.key >= '0' && e.key <= '9') {
+      const groupId = parseInt(e.key, 10);
+      import('./navigation.js').then(nav => {
+        nav.navigateToMain(groupId, false);
+      }).catch(error => {
+        console.error('Failed to load navigation module for keyboard shortcut, using fallback:', error);
+        renderGroup(groupId);
+      });
     }
 
     if (e.key === 'd') {
@@ -104,7 +84,12 @@ export function keybindings() {
     }
 
     if (e.key === 's') {
-      initConfigEditor();
+      import('./navigation.js').then(nav => {
+        nav.navigateToConfig();
+      }).catch(error => {
+        console.error('Failed to load navigation module for keyboard shortcut, using fallback:', error);
+        initConfigEditor();
+      });
     }
 
     if (e.key === 'q') {

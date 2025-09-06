@@ -291,7 +291,41 @@ canvas.slotgraph {
 
   .name {
     font-size: calc(1vw + 7pt);
+    text-align: center;
+}
+
+// Live Service Indicator
+#live-service-indicator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.9rem;
+  font-weight: 500;
+  margin-left: auto; // Float to the right
+  
+  #live-service-icon {
+    animation: pulse 2s infinite;
   }
+  
+  #live-service-text {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 300px;
+  }
+}
+
+@keyframes pulse {
+  0% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+  100% {
+    opacity: 1;
+  }
+}
 
   .mic_id {
     position: absolute;
@@ -758,6 +792,22 @@ canvas.slotgraph {
   padding-right: 0px;
 }
 
+.navbar-dark {
+  background-color: var(--color-black) !important;
+}
+
+.navbar-dark .navbar-toggler {
+  border-color: var(--color-gray);
+}
+
+.navbar-dark .navbar-toggler-icon {
+  background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' width='30' height='30' viewBox='0 0 30 30'%3e%3cpath stroke='rgba(215, 215, 215, 0.5)' stroke-linecap='round' stroke-miterlimit='10' stroke-width='2' d='M4 7h22M4 15h22M4 23h22'/%3e%3c/svg%3e");
+}
+
+.bg-dark {
+  background-color: var(--color-black) !important;
+}
+
 .navbar-toggler {
   padding-left: 1em;
   padding-right: 1em;
@@ -894,4 +944,423 @@ a:link, a:visited, a:hover, a:active {
 .color-guide-color p {
   font-style: italic;
   margin-bottom: 0px;
+}
+
+/* Integrations Styles */
+.integrations-page {
+  display: none;
+  padding-top: 76px;
+  background-color: var(--color-background);
+  min-height: 100vh;
+}
+
+.integrations-page .config-header {
+  background-color: var(--color-black);
+  padding: .75rem 1.25rem;
+  border: 1px solid var(--color-gray);
+  margin-left: -5px;
+  margin-right: -5px;
+  border-radius: 12px 12px 0 0;
+  margin-bottom: 20px;
+}
+
+.integrations-page .config-header h3 {
+  padding: 1em;
+  color: var(--color-white);
+  margin: 0;
+}
+
+.integrations-page .card {
+  background-color: var(--color-black);
+  border: 1px solid var(--color-gray);
+  border-radius: 12px;
+  margin-bottom: 20px;
+}
+
+.integrations-page .card-header {
+  background-color: var(--color-black);
+  border-bottom: 1px solid var(--color-gray);
+  padding: 1rem 1.25rem;
+}
+
+.integrations-page .card-header h5 {
+  color: var(--color-white);
+  margin: 0;
+  font-family: 'IBM Plex Sans';
+  font-weight: 500;
+}
+
+.integrations-page .card-body {
+  background-color: var(--color-black);
+  color: var(--color-white);
+  padding: 1.25rem;
+}
+
+.integrations-page .text-muted {
+  color: var(--color-gray) !important;
+}
+
+.integrations-page a {
+  color: var(--color-blue);
+}
+
+.integrations-page a:hover {
+  color: var(--color-white);
+  text-decoration: none;
+}
+
+.integrations-page .form-group {
+  margin-bottom: 15px;
+}
+
+.integrations-page label {
+  color: var(--color-white);
+  margin-bottom: 5px;
+  font-family: 'IBM Plex Sans';
+  font-weight: 300;
+}
+
+.integrations-page .form-control {
+  background-color: var(--color-black);
+  color: var(--color-white);
+  border: 1px solid var(--color-gray);
+  border-radius: 8px;
+  padding: 0.5rem 0.75rem;
+  font-family: 'IBM Plex Sans';
+  font-weight: 300;
+}
+
+.integrations-page .form-control:focus {
+  background-color: var(--color-black);
+  color: var(--color-white);
+  border-color: var(--color-blue);
+  box-shadow: 0 0 0 0.2rem rgba(0, 100, 148, 0.25);
+}
+
+.integrations-page .form-control::placeholder {
+  color: var(--color-gray);
+}
+
+.integrations-page .btn {
+  border-radius: 8px;
+  font-family: 'IBM Plex Sans';
+  font-weight: 400;
+  padding: 0.5rem 1rem;
+}
+
+.integrations-page .btn-primary {
+  background-color: var(--color-blue);
+  border-color: var(--color-blue);
+  color: var(--color-white);
+}
+
+.integrations-page .btn-primary:hover {
+  background-color: #005a8a;
+  border-color: #005a8a;
+  color: var(--color-white);
+}
+
+.integrations-page .btn-success {
+  background-color: var(--color-green);
+  border-color: var(--color-green);
+  color: var(--color-white);
+}
+
+.integrations-page .btn-success:hover {
+  background-color: #5da069;
+  border-color: #5da069;
+  color: var(--color-white);
+}
+
+.integrations-page .btn-secondary {
+  background-color: var(--color-gray);
+  border-color: var(--color-gray);
+  color: var(--color-white);
+}
+
+.integrations-page .btn-secondary:hover {
+  background-color: #525252;
+  border-color: #525252;
+  color: var(--color-white);
+}
+
+.integrations-page .btn-outline-secondary {
+  background-color: transparent;
+  border-color: var(--color-gray);
+  color: var(--color-gray);
+}
+
+.integrations-page .btn-outline-secondary:hover {
+  background-color: var(--color-gray);
+  border-color: var(--color-gray);
+  color: var(--color-white);
+}
+
+.integrations-page .btn-outline-primary {
+  background-color: transparent;
+  border-color: var(--color-blue);
+  color: var(--color-blue);
+}
+
+.integrations-page .btn-outline-primary:hover {
+  background-color: var(--color-blue);
+  border-color: var(--color-blue);
+  color: var(--color-white);
+}
+
+.integrations-page .alert {
+  background-color: var(--color-yellow-dark);
+  border: 1px solid var(--color-yellow);
+  color: var(--color-white);
+  border-radius: 8px;
+  padding: 1rem;
+}
+
+.integrations-page .alert-warning {
+  background-color: rgba(239, 157, 81, 0.1);
+  border-color: var(--color-yellow);
+  color: var(--color-white);
+}
+
+.integrations-page .integration-section {
+  background-color: var(--color-black);
+  border: 1px solid var(--color-gray);
+  border-radius: 12px;
+  padding: 20px;
+  margin-bottom: 20px;
+}
+
+.integrations-page .integration-section h4 {
+  color: var(--color-white);
+  margin-bottom: 15px;
+  font-family: 'IBM Plex Sans';
+  font-weight: 500;
+}
+
+.integrations-page .integration-section .form-group {
+  margin-bottom: 15px;
+}
+
+.integrations-page .integration-section label {
+  color: var(--color-white);
+  margin-bottom: 5px;
+}
+
+.integrations-page .table {
+  background-color: var(--color-black);
+  color: var(--color-white);
+  border: 1px solid var(--color-gray);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.integrations-page .table th {
+  background-color: var(--color-black);
+  border-color: var(--color-gray);
+  color: var(--color-white);
+  font-family: 'IBM Plex Sans';
+  font-weight: 500;
+}
+
+.integrations-page .table td {
+  border-color: var(--color-gray);
+  color: var(--color-white);
+  font-family: 'IBM Plex Sans';
+  font-weight: 300;
+}
+
+.integrations-page .table-sm th,
+.integrations-page .table-sm td {
+  padding: 0.5rem;
+}
+
+.integrations-page .text-success {
+  color: var(--color-green) !important;
+}
+
+.integrations-page .text-danger {
+  color: var(--color-red) !important;
+}
+
+.integrations-page .text-warning {
+  color: var(--color-yellow) !important;
+}
+
+.integrations-page .ml-2 {
+  margin-left: 0.5rem;
+}
+
+.integrations-page .mb-4 {
+  margin-bottom: 1.5rem;
+}
+
+.integrations-page .float-right {
+  float: right;
+}
+
+.integrations-page .input-group {
+  display: flex;
+}
+
+.integrations-page .input-group .form-control {
+  border-radius: 8px 0 0 8px;
+}
+
+.integrations-page .input-group-append {
+  display: flex;
+}
+
+.integrations-page .input-group-append .btn {
+  border-radius: 0 8px 8px 0;
+  border-left: none;
+}
+
+.integrations-page .table-responsive {
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.integrations-page hr {
+  border-color: var(--color-gray);
+  margin: 2rem 0;
+}
+
+.integrations-page h6 {
+  color: var(--color-white);
+  font-family: 'IBM Plex Sans';
+  font-weight: 500;
+  margin-bottom: 10px;
+}
+
+.integrations-page .form-text {
+  color: var(--color-gray);
+  font-size: 0.875rem;
+  font-family: 'IBM Plex Sans';
+  font-weight: 300;
+}
+
+.integrations-page .btn-sm {
+  padding: 0.25rem 0.5rem;
+  font-size: 0.875rem;
+}
+
+.integrations-page select[multiple] {
+  min-height: 120px;
+}
+
+.integrations-page select[multiple] option {
+  background-color: var(--color-black);
+  color: var(--color-white);
+  padding: 0.5rem;
+}
+
+.integrations-page select[multiple] option:checked {
+  background-color: var(--color-blue);
+  color: var(--color-white);
+}
+
+.integrations-page select[multiple] option:hover {
+  background-color: var(--color-gray);
+}
+
+#pco-slot-mappings {
+  background-color: var(--color-black);
+  color: var(--color-white);
+}
+
+#pco-slot-mappings th {
+  background-color: var(--color-black);
+  border-color: var(--color-gray);
+}
+
+#pco-slot-mappings td {
+  border-color: var(--color-gray);
+}
+
+/* Keyboard shortcuts styling */
+kbd {
+  background-color: var(--color-black);
+  border: 1px solid var(--color-gray);
+  border-radius: 4px;
+  color: var(--color-white);
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.875em;
+  padding: 0.2em 0.4em;
+  box-shadow: 0 1px 0 var(--color-gray);
+}
+
+/* Modal styling */
+.modal-content {
+  background-color: var(--color-black);
+  border: 1px solid var(--color-gray);
+  border-radius: 12px;
+  color: var(--color-white);
+}
+
+.modal-header {
+  background-color: var(--color-black);
+  border-bottom: 1px solid var(--color-gray);
+  color: var(--color-white);
+}
+
+.modal-footer {
+  background-color: var(--color-black);
+  border-top: 1px solid var(--color-gray);
+  color: var(--color-white);
+}
+
+.modal-body {
+  background-color: var(--color-black);
+  color: var(--color-white);
+}
+
+/* Input group styling */
+.input-group-prepend .input-group-text,
+.input-group-append .input-group-text {
+  background-color: var(--color-black);
+  border: 1px solid var(--color-gray);
+  color: var(--color-white);
+  font-family: 'IBM Plex Sans';
+  font-weight: 300;
+}
+
+.input-group-text {
+  background-color: var(--color-black);
+  border: 1px solid var(--color-gray);
+  color: var(--color-white);
+  font-family: 'IBM Plex Sans';
+  font-weight: 300;
+}
+
+/* Checkbox styling */
+input[type="checkbox"] {
+  background-color: var(--color-black);
+  border: 1px solid var(--color-gray);
+  color: var(--color-white);
+  accent-color: var(--color-blue);
+}
+
+/* Form label styling */
+.col-form-label {
+  color: var(--color-white);
+  font-family: 'IBM Plex Sans';
+  font-weight: 300;
+  margin-bottom: 0.5rem;
+}
+
+/* Disabled form controls styling */
+.form-control:disabled,
+.form-control[disabled] {
+  background-color: var(--color-gray);
+  color: var(--color-white);
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+select:disabled,
+select[disabled] {
+  background-color: var(--color-gray);
+  color: var(--color-white);
+  opacity: 0.6;
+  cursor: not-allowed;
 }

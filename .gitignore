@@ -24,3 +24,11 @@ static/data2.json
 static/fonts/*
 static/*.js*
 config/*
+myenv/
+venv/
+.env
+__pycache__/
+# OAuth setup files with real credentials
+oauth_setup_real.bat
+oauth_setup_real.sh
+.env.local

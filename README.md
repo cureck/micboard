@@ -35,10 +35,37 @@ Micboard supports the following devices -
 Micboard uses IP addresses to connect to RF devices.  RF devices can be addressed through static or reserved IPs.  They just need to be consistent.
 
 
+## New Features (v0.8.5+)
+* **Planning Center Services Integration** - Automatically sync performer names from your service plans
+* **Google Drive Integration** - Automatically download background images from a shared folder
+* **Python 3.12+ Support** - Updated for modern Python versions
+* **Node.js 20+ Support** - Updated frontend build tools
+
+## Requirements
+* Python 3.12 or later
+* Node.js 20 or later (for development)
+* Windows, macOS, or Linux
+
+## Quick Start
+### Windows
+```
+run_server.bat
+```
+
+### macOS/Linux
+```bash
+chmod +x run_server.sh
+./run_server.sh
+```
+
+Then open http://localhost:8058 in your browser.
+
 ## Documentation
 * [Installation](docs/installation.md)
 * [Configuration](docs/configuration.md)
+* [Integrations (PCO & Google Drive)](docs/integrations.md)
 * [Micboard MultiVenue](docs/multivenue.md)
+* [Windows Setup Guide](README_WINDOWS.md)
 
 #### Developer Info
 * [Building the Electron wrapper for macOS](docs/electron.md)

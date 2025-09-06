@@ -274,9 +274,17 @@ export function renderDisplayList(dl) {
     let t;
     if (e !== 0) {
       t = document.getElementById('column-template').content.cloneNode(true);
-      t.querySelector('div.col-sm').id = 'slot-' + tx[e].slot;
-      updateViewOnly(t, tx[e]);
-      charts[tx[e].slot] = initChart(t, tx[e]);
+      // Defensive: render placeholder if transmitter data for the slot is not yet available
+      if (!tx[e]) {
+        console.warn('renderDisplayList: missing transmitter for slot', e);
+        t.querySelector('p.name').innerHTML = 'BLANK';
+        t.querySelector('.col-sm').classList.add('blank');
+        t.querySelector('div.col-sm').id = 'slot-' + e;
+      } else {
+        t.querySelector('div.col-sm').id = 'slot-' + tx[e].slot;
+        updateViewOnly(t, tx[e]);
+        charts[tx[e].slot] = initChart(t, tx[e]);
+      }
     } else {
       t = document.getElementById('column-template').content.cloneNode(true);
       t.querySelector('p.name').innerHTML = 'BLANK';
@@ -295,6 +303,10 @@ export function renderGroup(group) {
   }
   micboard.group = group;
   updateHash();
+  
+  // Hide integrations page when showing groups
+  $('.integrations-page').hide();
+  
   if (group === 0) {
     micboard.displayList = allSlots();
     renderDisplayList(micboard.displayList);
