@@ -77,10 +77,30 @@ class JsonHandler(web.RequestHandler):
         self.set_header('Content-Type', 'application/json')
         # Inject plan_of_day into the json payload
         try:
-            from planning_center import get_cached_plan_of_day
+            # Use the new PCO scheduler instead of the old system
+            import pco_scheduler
+            scheduler = pco_scheduler.get_scheduler()
+            if scheduler:
+                # Get all upcoming plans instead of just the current one
+                upcoming_plans = scheduler.get_upcoming_plans()
+                current_plan = scheduler.get_current_plan()
+                
+                # Mark which plan is currently active
+                for plan in upcoming_plans:
+                    plan['is_live'] = (current_plan and plan['plan_id'] == current_plan['plan_id'])
+                    plan['is_manual'] = (scheduler.manual_override_plan and 
+                                        plan['plan_id'] == scheduler.manual_override_plan['plan_id'])
+                
+                # Return all upcoming plans as an array
+                plan_of_day = upcoming_plans
+            else:
+                plan_of_day = []
+            
             payload = json.loads(micboard_json(shure.NetworkDevices))
-            plan_of_day = get_cached_plan_of_day()
-            logging.info(f"JsonHandler: plan_of_day data: {plan_of_day}")
+            logging.info(f"JsonHandler: plan_of_day data: {len(plan_of_day)} plans")
+            if plan_of_day:
+                for plan in plan_of_day:
+                    logging.info(f"JsonHandler: Plan {plan.get('plan_id')} - Service Type: {plan.get('service_type_id')}, Title: {plan.get('title')}, Slot assignments: {plan.get('slot_assignments', {})}")
             payload['plan_of_day'] = plan_of_day
             self.write(json.dumps(payload, sort_keys=True, indent=4))
         except Exception as e:
@@ -177,6 +197,10 @@ class PCOServiceTypesHandler(web.RequestHandler):
     def get(self):
         self.set_header('Content-Type', 'application/json')
         service_types = planning_center.get_service_types()
+        
+        # Populate the service type names cache with the fetched data
+        planning_center.populate_service_type_names_from_data(service_types)
+        
         self.write(json.dumps(service_types))
 
 
@@ -267,9 +291,29 @@ class PCOSyncHandler(web.RequestHandler):
     def post(self):
         try:
             logging.info("Manual PCO sync triggered")
-            planning_center.sync_assignments()
-            planning_center.refresh_schedule_cache_now()
-            self.write(json.dumps({'status': 'success', 'message': 'PCO sync completed'}))
+            # Use the new PCO scheduler instead of the old system
+            import pco_scheduler
+            scheduler = pco_scheduler.get_scheduler()
+            if scheduler:
+                # Get service types from config
+                pco_config = config.config_tree.get('integrations', {}).get('planning_center', {})
+                service_types = [st['id'] for st in pco_config.get('service_types', [])]
+                if not service_types:
+                    service_types = ['546904', '769651']  # Default service types
+                
+                scheduler.refresh_schedule(service_types)
+                
+                # Apply current slot assignments
+                def update_slot(slot_num, person_name):
+                    slot = config.get_slot_by_number(slot_num)
+                    if slot:
+                        slot['extended_name'] = person_name
+                        config.update_slot(slot)
+                
+                scheduler.apply_current_slot_assignments(update_slot)
+                self.write(json.dumps({'status': 'success', 'message': 'PCO sync completed'}))
+            else:
+                self.write(json.dumps({'status': 'error', 'message': 'PCO scheduler not initialized'}))
         except Exception as e:
             logging.error(f"Manual PCO sync error: {e}")
             self.set_status(500)
@@ -281,11 +325,36 @@ class PCOResetHandler(web.RequestHandler):
     def post(self):
         try:
             logging.info("PCO sync state reset triggered")
-            planning_center.clear_assignment_state()
-            planning_center.sync_assignments()
-            # Also refresh schedule cache immediately
-            planning_center.refresh_schedule_cache_now()
-            self.write(json.dumps({'status': 'success', 'message': 'PCO sync state reset and sync completed'}))
+            # Use the new PCO scheduler instead of the old system
+            import pco_scheduler
+            scheduler = pco_scheduler.get_scheduler()
+            if scheduler:
+                # Clear all slot names first
+                for slot_num in range(1, 7):
+                    slot = config.get_slot_by_number(slot_num)
+                    if slot:
+                        slot['extended_name'] = ''
+                        config.update_slot(slot)
+                
+                # Get service types from config
+                pco_config = config.config_tree.get('integrations', {}).get('planning_center', {})
+                service_types = [st['id'] for st in pco_config.get('service_types', [])]
+                if not service_types:
+                    service_types = ['546904', '769651']  # Default service types
+                
+                scheduler.refresh_schedule(service_types)
+                
+                # Apply current slot assignments
+                def update_slot(slot_num, person_name):
+                    slot = config.get_slot_by_number(slot_num)
+                    if slot:
+                        slot['extended_name'] = person_name
+                        config.update_slot(slot)
+                
+                scheduler.apply_current_slot_assignments(update_slot)
+                self.write(json.dumps({'status': 'success', 'message': 'PCO sync state reset and sync completed'}))
+            else:
+                self.write(json.dumps({'status': 'error', 'message': 'PCO scheduler not initialized'}))
         except Exception as e:
             logging.error(f"PCO reset error: {e}")
             self.set_status(500)
@@ -652,17 +721,36 @@ class PCORefreshStructureHandler(web.RequestHandler):
             
             for service_type in service_types:
                 service_type_id = service_type['id']
-                # Building structure for service type
+                logging.info(f"Building structure for service type: {service_type_id}")
                 
-                # Get teams and positions for this service type
+                # Get teams for this service type
                 teams = planning_center.get_teams_for_service_type(service_type_id)
                 
-                # Build updated service type structure
+                # Build updated service type structure with teams and their positions
                 updated_service_type = {
                     'id': service_type_id,
                     'name': service_type.get('name', f'Service Type {service_type_id}'),
-                    'teams': teams
+                    'teams': [],
+                    'reuse_rules': service_type.get('reuse_rules', [])
                 }
+                
+                # For each team, get its positions
+                for team in teams:
+                    team_id = team['id']
+                    team_name = team['name']
+                    
+                    # Get positions for this team in this service type
+                    positions = planning_center.get_positions_for_team_in_service_type(service_type_id, team_id)
+                    
+                    team_structure = {
+                        'name': team_name,
+                        'id': team_id,
+                        'service_type_id': service_type_id,
+                        'positions': positions
+                    }
+                    
+                    updated_service_type['teams'].append(team_structure)
+                
                 updated_service_types.append(updated_service_type)
             
             # Update the config with the new structure

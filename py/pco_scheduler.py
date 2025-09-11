@@ -139,7 +139,7 @@ class PCOScheduler:
                 }
                 
                 # Map assignments to slots
-                plan_obj['slot_assignments'] = self._map_assignments_to_slots(assignments)
+                plan_obj['slot_assignments'] = self._map_assignments_to_slots(assignments, service_type_id)
                 
                 all_plans.append(plan_obj)
                 logging.info(f"Added plan {plan_id} for {plan_obj['dates']} (live at {live_time})")
@@ -194,36 +194,108 @@ class PCOScheduler:
         logging.info(f"Found {len(assignments)} team members for plan {plan_id}")
         return assignments
     
-    def _map_assignments_to_slots(self, assignments: List[Dict]) -> Dict[int, str]:
+    def _map_assignments_to_slots(self, assignments: List[Dict], service_type_id: str = None) -> Dict[int, str]:
         """
-        Map assignments to slot numbers based on position names
+        Map assignments to slot numbers based on position names and configured mappings
         Returns dict of {slot_number: person_name}
         """
         slot_assignments = {}
+        
+        logging.info(f"_map_assignments_to_slots: Processing {len(assignments)} assignments for service_type_id={service_type_id}")
+        
+        # Get configured mappings for this service type
+        configured_mappings = self._get_configured_mappings(service_type_id)
         
         for assignment in assignments:
             position_name = assignment.get('position_name', '')
             person_name = assignment.get('person_name', '')
             
+            logging.info(f"_map_assignments_to_slots: Processing assignment: {person_name} -> {position_name}")
+            
             if not position_name or not person_name:
+                logging.info(f"_map_assignments_to_slots: Skipping assignment due to missing data")
                 continue
             
-            # Check if this position is mapped to a slot
-            slot_number = self._get_slot_for_position(position_name)
+            # Check if this position is mapped to a slot using service-type-specific mapping
+            slot_number = self._get_slot_for_position_with_service_type(position_name, service_type_id, configured_mappings)
             if slot_number:
                 slot_assignments[slot_number] = person_name
                 logging.info(f"Mapped {person_name} ({position_name}) to slot {slot_number}")
+            else:
+                logging.info(f"No slot mapping found for position: {position_name}")
         
+        logging.info(f"_map_assignments_to_slots: Final slot assignments: {slot_assignments}")
         return slot_assignments
     
-    def _get_slot_for_position(self, position_name: str) -> Optional[int]:
+    def _get_configured_mappings(self, service_type_id: str = None) -> Dict[str, int]:
+        """
+        Get configured position name to slot mappings for a service type
+        """
+        import config
+        
+        mappings = {}
+        
+        # Get PCO configuration
+        pco_config = config.config_tree.get('integrations', {}).get('planning_center', {})
+        service_types = pco_config.get('service_types', [])
+        
+        logging.info(f"_get_configured_mappings: Looking for mappings for service_type_id={service_type_id}")
+        logging.info(f"_get_configured_mappings: Found {len(service_types)} service types in config")
+        
+        for st in service_types:
+            st_id = st.get('id')
+            logging.info(f"_get_configured_mappings: Processing service type {st_id}")
+            
+            # If service_type_id is specified, only get mappings for that service type
+            if service_type_id and st_id != service_type_id:
+                logging.info(f"_get_configured_mappings: Skipping service type {st_id} (not {service_type_id})")
+                continue
+            
+            # Get mappings from reuse_rules (name-based)
+            reuse_rules = st.get('reuse_rules', [])
+            logging.info(f"_get_configured_mappings: Found {len(reuse_rules)} reuse rules for service type {st_id}")
+            
+            for rule in reuse_rules:
+                position_name = rule.get('position_name')
+                slot_number = rule.get('slot')
+                if position_name and slot_number:
+                    mappings[position_name] = slot_number
+                    logging.info(f"_get_configured_mappings: Added mapping {position_name} -> slot {slot_number}")
+            
+            # Get mappings from teams/positions (ID-based, but we need to map by name)
+            # This is more complex as we need to fetch position names from PCO API
+            # For now, we'll rely on the reuse_rules which should be configured properly
+        
+        # If no service-specific mappings found, try to get mappings from all service types
+        if not mappings and service_type_id:
+            logging.info(f"_get_configured_mappings: No service-specific mappings found for {service_type_id}, trying all service types")
+            for st in service_types:
+                for rule in st.get('reuse_rules', []):
+                    position_name = rule.get('position_name')
+                    slot_number = rule.get('slot')
+                    if position_name and slot_number:
+                        mappings[position_name] = slot_number
+                        logging.info(f"_get_configured_mappings: Added fallback mapping {position_name} -> slot {slot_number}")
+        
+        # If still no mappings found, fall back to global mappings
+        if not mappings:
+            logging.info(f"_get_configured_mappings: No configured mappings found, falling back to global mappings")
+            mappings = self.slot_mappings.copy()
+        
+        logging.info(f"_get_configured_mappings: Returning {len(mappings)} total mappings: {mappings}")
+        return mappings
+    
+    def _get_slot_for_position(self, position_name: str, configured_mappings: Dict[str, int] = None) -> Optional[int]:
         """
         Get slot number for a position name
         Checks configured mappings and fallback patterns
         """
+        # Use provided mappings or fall back to instance mappings
+        mappings = configured_mappings or self.slot_mappings
+        
         # First check configured mappings
-        if position_name in self.slot_mappings:
-            return self.slot_mappings[position_name]
+        if position_name in mappings:
+            return mappings[position_name]
         
         # Check for "Mic N" pattern
         if position_name.startswith('Mic '):
@@ -244,6 +316,42 @@ class PCOScheduler:
             return mic_positions[position_name]
         
         return None
+
+    def _get_slot_for_position_with_service_type(self, position_name: str, service_type_id: str, configured_mappings: Dict[str, int] = None) -> Optional[int]:
+        """
+        Get slot number for a position name using service-type-specific mappings
+        """
+        import config
+        
+        # First try to find a mapping that matches both position name and service type
+        pco_config = config.config_tree.get('integrations', {}).get('planning_center', {})
+        service_types = pco_config.get('service_types', [])
+        
+        for st in service_types:
+            if st.get('id') != service_type_id:
+                continue
+            
+            # Check reuse rules for this service type
+            for rule in st.get('reuse_rules', []):
+                if (rule.get('position_name') == position_name and 
+                    rule.get('service_type_id') == service_type_id):
+                    slot_number = rule.get('slot')
+                    if slot_number:
+                        logging.info(f"Found service-type-specific mapping: {position_name} -> slot {slot_number} for service type {service_type_id}")
+                        return slot_number
+            
+            # Check teams/positions for this service type
+            for team in st.get('teams', []):
+                for position in team.get('positions', []):
+                    if (position.get('name') == position_name and 
+                        position.get('service_type_id') == service_type_id):
+                        slot_number = position.get('slot')
+                        if slot_number:
+                            logging.info(f"Found team/position mapping: {position_name} -> slot {slot_number} for service type {service_type_id}")
+                            return slot_number
+        
+        # Fall back to generic position name matching
+        return self._get_slot_for_position(position_name, configured_mappings)
     
     def get_lead_time(self, service_type_id: str) -> int:
         """Get lead time for a service type (default 2 hours)"""
@@ -251,14 +359,9 @@ class PCOScheduler:
         return 2
     
     def get_service_type_name(self, service_type_id: str) -> str:
-        """Get friendly name for service type"""
-        # This could be fetched from API or configured
-        names = {
-            '546904': 'CFC Sunday',
-            '769651': 'CFC Wednesday',
-            '120155': 'Sunday Service'
-        }
-        return names.get(service_type_id, f"Service {service_type_id}")
+        """Get friendly name for service type by fetching from PCO API"""
+        import planning_center
+        return planning_center.get_service_type_name(service_type_id)
     
     def refresh_schedule(self, service_types: List[str]):
         """Refresh the schedule cache"""
@@ -276,21 +379,48 @@ class PCOScheduler:
         """Update which plan should be live based on current time"""
         now = datetime.now(timezone.utc).astimezone()
         
+        # Store previous live plan to detect changes
+        previous_live_plan = self.current_live_plan
+        
         # Reset current live plan
         self.current_live_plan = None
         
         # Find if any plan should be live
-        for plan in self.upcoming_plans:
+        for i, plan in enumerate(self.upcoming_plans):
             live_time = date_parser.parse(plan['live_time'])
             service_time = date_parser.parse(plan['service_time'])
             
-            # Check if we're in the live window (between live_time and service_time + 1 hour)
-            end_time = service_time + timedelta(hours=1)
+            # Calculate the end of the live window
+            # Live window ends at: end of service day OR next service's live time (whichever comes first)
+            end_of_service_day = service_time.replace(hour=23, minute=59, second=59, microsecond=999999)
             
-            if live_time <= now <= end_time:
+            # Check if there's a next service
+            next_live_time = None
+            if i + 1 < len(self.upcoming_plans):
+                next_plan = self.upcoming_plans[i + 1]
+                next_live_time = date_parser.parse(next_plan['live_time'])
+            
+            # Live window ends at the earlier of: end of service day or next service's live time
+            if next_live_time and next_live_time < end_of_service_day:
+                live_window_end = next_live_time
+            else:
+                live_window_end = end_of_service_day
+            
+            # Check if we're in this plan's live window
+            if live_time <= now <= live_window_end:
                 self.current_live_plan = plan
-                logging.info(f"Plan {plan['plan_id']} is now live")
+                logging.info(f"Plan {plan['plan_id']} is live (window: {live_time} to {live_window_end})")
                 break
+        
+        # If the live plan changed, apply slot assignments
+        if self.current_live_plan != previous_live_plan:
+            if self.current_live_plan:
+                logging.info(f"Live plan changed to {self.current_live_plan['plan_id']}, applying slot assignments")
+                # Don't apply slot assignments here - let the main server thread handle it
+                # This prevents deadlocks in the background scheduler thread
+            else:
+                logging.info("No plan is live, clearing slot assignments")
+                # Don't clear slot assignments here - let the main server thread handle it
     
     def get_current_plan(self) -> Optional[Dict]:
         """

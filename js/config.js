@@ -436,12 +436,23 @@ function loadPositionsForTeamInSettings(teamName, positionSelect) {
           }
         }
         
-        console.log(`Loaded ${positions.length} positions for team "${teamName}" from cached structure:`, positions);
+        // Deduplicate positions by name
+        const uniquePositions = [];
+        const seenNames = new Set();
+        
+        for (const position of positions) {
+          if (!seenNames.has(position.name)) {
+            seenNames.add(position.name);
+            uniquePositions.push(position);
+          }
+        }
+        
+        console.log(`Loaded ${positions.length} positions for team "${teamName}" from cached structure, ${uniquePositions.length} unique:`, uniquePositions);
         
         const currentValue = positionSelect.val();
         positionSelect.prop('disabled', false).empty().append('<option value="">-- Select Position --</option>');
         
-        positions.forEach(position => {
+        uniquePositions.forEach(position => {
           const option = $('<option>').val(position.name).text(position.name);
           if (currentValue === position.name) {
             option.prop('selected', true);
@@ -477,10 +488,23 @@ function loadPositionsFromAPI(teamName, positionSelect) {
     .then(positions => {
       console.log(`Received ${positions.length} positions for team "${teamName}":`, positions);
       
+      // Deduplicate positions by name
+      const uniquePositions = [];
+      const seenNames = new Set();
+      
+      for (const position of positions) {
+        if (!seenNames.has(position.name)) {
+          seenNames.add(position.name);
+          uniquePositions.push(position);
+        }
+      }
+      
+      console.log(`Deduplicated to ${uniquePositions.length} unique positions for team "${teamName}"`);
+      
       const currentValue = positionSelect.val();
       positionSelect.prop('disabled', false).empty().append('<option value="">-- Select Position --</option>');
       
-      positions.forEach(position => {
+      uniquePositions.forEach(position => {
         const option = $('<option>').val(position.name).text(position.name);
         if (currentValue === position.name) {
           option.prop('selected', true);
@@ -488,7 +512,7 @@ function loadPositionsFromAPI(teamName, positionSelect) {
         positionSelect.append(option);
       });
       
-      console.log(`Populated position dropdown with ${positions.length} options for team "${teamName}"`);
+      console.log(`Populated position dropdown with ${uniquePositions.length} unique options for team "${teamName}"`);
     })
     .catch(error => {
       console.error('Error loading positions:', error);
@@ -612,13 +636,35 @@ function saveSlotMapping(slotNum, teamName, positionName) {
       const pcoConfig = data.planning_center || {};
       console.log('Current PCO config:', pcoConfig);
       
-      // Update or add the mapping to each service type
+      // Find the team and position IDs for each service type
       (pcoConfig.service_types || []).forEach(serviceType => {
         if (!serviceType.reuse_rules) {
           serviceType.reuse_rules = [];
         }
         
         console.log(`Processing service type ${serviceType.id}, current reuse_rules:`, serviceType.reuse_rules);
+        
+        // Find the team and position IDs for this service type
+        let teamId = null;
+        let positionId = null;
+        
+        for (const team of serviceType.teams || []) {
+          if (team.name === teamName) {
+            teamId = team.id;
+            for (const position of team.positions || []) {
+              if (position.name === positionName) {
+                positionId = position.id;
+                break;
+              }
+            }
+            break;
+          }
+        }
+        
+        if (!teamId || !positionId) {
+          console.warn(`Could not find team/position IDs for ${teamName}/${positionName} in service type ${serviceType.id}`);
+          return;
+        }
         
         // Find existing rule for this slot
         const existingRuleIndex = serviceType.reuse_rules.findIndex(rule => rule.slot === slotNum);
@@ -628,17 +674,23 @@ function saveSlotMapping(slotNum, teamName, positionName) {
           serviceType.reuse_rules[existingRuleIndex] = {
             slot: slotNum,
             team_name: teamName,
-            position_name: positionName
+            position_name: positionName,
+            team_id: teamId,
+            position_id: positionId,
+            service_type_id: serviceType.id
           };
-          console.log(`Updated existing rule for slot ${slotNum} in service type ${serviceType.id}`);
+          console.log(`Updated existing rule for slot ${slotNum} in service type ${serviceType.id} with IDs: team=${teamId}, position=${positionId}`);
         } else {
           // Add new rule
           serviceType.reuse_rules.push({
             slot: slotNum,
             team_name: teamName,
-            position_name: positionName
+            position_name: positionName,
+            team_id: teamId,
+            position_id: positionId,
+            service_type_id: serviceType.id
           });
-          console.log(`Added new rule for slot ${slotNum} in service type ${serviceType.id}`);
+          console.log(`Added new rule for slot ${slotNum} in service type ${serviceType.id} with IDs: team=${teamId}, position=${positionId}`);
         }
         
         console.log(`Service type ${serviceType.id} reuse_rules after update:`, serviceType.reuse_rules);

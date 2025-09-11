@@ -171,21 +171,28 @@ class PCOCurrentPlanHandler(RequestHandler):
 def init_pco_scheduler():
     """Initialize the PCO scheduler on server startup"""
     try:
-        # Get PCO credentials from config or environment
-        pco_config = config.config_tree.get('integrations', {}).get('planning_center', {})
+        # Get PCO credentials from oauth_credentials section (where they're actually stored)
+        oauth_creds = config.config_tree.get('oauth_credentials', {})
         
-        # Try to get credentials from config
-        client_id = pco_config.get('client_id')
-        client_secret = pco_config.get('client_secret')
+        # Try to get credentials from oauth_credentials
+        client_id = oauth_creds.get('pco_client_id')
+        client_secret = oauth_creds.get('pco_client_secret')
+        
+        # Debug logging
+        logging.info(f"OAuth credentials found: {bool(oauth_creds)}")
+        logging.info(f"Client ID present: {bool(client_id)}")
+        logging.info(f"Client Secret present: {bool(client_secret)}")
         
         if not client_id or not client_secret:
-            logging.error("PCO credentials not configured")
+            logging.error("PCO credentials not configured in oauth_credentials section")
+            logging.error(f"Available oauth keys: {list(oauth_creds.keys()) if oauth_creds else 'No oauth config'}")
             return False
         
         # Initialize scheduler
         scheduler = pco_scheduler.init_scheduler(client_id, client_secret)
         
-        # Get service types
+        # Get service types from integrations.planning_center config
+        pco_config = config.config_tree.get('integrations', {}).get('planning_center', {})
         service_types = [st['id'] for st in pco_config.get('service_types', [])]
         if not service_types:
             service_types = ['546904', '769651']  # Default service types
@@ -193,14 +200,19 @@ def init_pco_scheduler():
         # Configure slot mappings if available
         slot_mappings = {}
         for st in pco_config.get('service_types', []):
+            # Get mappings from reuse_rules (name-based)
             for rule in st.get('reuse_rules', []):
                 position_name = rule.get('position_name')
                 slot_number = rule.get('slot')
                 if position_name and slot_number:
                     slot_mappings[position_name] = slot_number
+            
+            # Note: ID-based mappings from teams/positions are handled dynamically
+            # in _get_configured_mappings() since they require service-type-specific lookups
         
         if slot_mappings:
             scheduler.update_slot_mappings(slot_mappings)
+            logging.info(f"Loaded {len(slot_mappings)} slot mappings from configuration")
         
         # Start the scheduler
         scheduler.start_scheduler(service_types)
