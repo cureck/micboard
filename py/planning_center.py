@@ -52,6 +52,9 @@ _sync_stop_event = threading.Event()
 _last_assignment_state = {}
 _log_last: Dict[str, float] = {}
 
+# Service type name cache - populated from the integrations page
+_service_type_names_cache: Dict[str, str] = {}
+
 # Simple in-memory cache for PCO schedules
 _schedule_cache_lock = threading.Lock()
 _schedule_cache: Dict[str, Any] = {
@@ -242,6 +245,70 @@ def get_service_types() -> List[Dict[str, Any]]:
         return []
 
 
+def get_service_type_name(service_type_id: str) -> str:
+    """Get friendly name for service type from cache or PCO API."""
+    # Check cache first (populated from integrations page data)
+    if service_type_id in _service_type_names_cache:
+        return _service_type_names_cache[service_type_id]
+    
+    # Fallback to API call only if not in cache
+    session = get_pco_session()
+    if not session:
+        return f"Service {service_type_id}"
+    
+    try:
+        url = f"{PCO_API_BASE}/service_types/{service_type_id}"
+        response = _make_pco_request(session, url)
+        if not response:
+            return f"Service {service_type_id}"
+        
+        data = response.json()
+        service_type = data.get('data', {})
+        if service_type and 'attributes' in service_type:
+            name = service_type['attributes'].get('name', f"Service {service_type_id}")
+            # Cache the result for future use
+            _service_type_names_cache[service_type_id] = name
+            return name
+        
+        return f"Service {service_type_id}"
+    except Exception as e:
+        logging.error(f"Error fetching service type name for {service_type_id}: {e}")
+        return f"Service {service_type_id}"
+
+
+def preload_service_type_names(service_type_ids: List[str]) -> None:
+    """Preload service type names into cache to avoid individual API calls."""
+    session = get_pco_session()
+    if not session:
+        return
+    
+    try:
+        # Fetch all service types at once
+        response = _make_pco_request(session, f"{PCO_API_BASE}/service_types")
+        if not response:
+            return
+        
+        data = response.json()
+        for item in data.get('data', []):
+            service_type_id = item['id']
+            if service_type_id in service_type_ids:
+                name = item['attributes'].get('name', f"Service {service_type_id}")
+                _service_type_names_cache[service_type_id] = name
+                logging.info(f"Cached service type name: {service_type_id} -> {name}")
+    except Exception as e:
+        logging.error(f"Error preloading service type names: {e}")
+
+
+def populate_service_type_names_from_data(service_types_data: List[Dict[str, Any]]) -> None:
+    """Populate service type names cache from service types data (e.g., from integrations page)."""
+    for service_type in service_types_data:
+        service_type_id = service_type.get('id')
+        service_type_name = service_type.get('name')
+        if service_type_id and service_type_name:
+            _service_type_names_cache[service_type_id] = service_type_name
+            logging.info(f"Cached service type name from data: {service_type_id} -> {service_type_name}")
+
+
 def get_teams(service_type_ids: List[str]) -> List[Dict[str, Any]]:
     """Fetch teams from specified service types, deduplicated by name."""
     session = get_pco_session()
@@ -270,6 +337,33 @@ def get_teams(service_type_ids: List[str]) -> List[Dict[str, Any]]:
             logging.error(f"Error fetching teams for service type {service_type_id}: {e}")
     
     return list(teams_by_name.values())
+
+
+def get_teams_for_service_type(service_type_id: str) -> List[Dict[str, Any]]:
+    """Fetch teams for a specific service type with their service-type-specific IDs."""
+    session = get_pco_session()
+    if not session:
+        return []
+    
+    try:
+        url = f"{PCO_API_BASE}/service_types/{service_type_id}/teams"
+        response = _make_pco_request(session, url)
+        if not response:
+            return []
+        data = response.json()
+        
+        teams = []
+        for item in data.get('data', []):
+            teams.append({
+                'id': item['id'],
+                'name': item['attributes']['name'],
+                'service_type_id': service_type_id
+            })
+        
+        return teams
+    except Exception as e:
+        logging.error(f"Error fetching teams for service type {service_type_id}: {e}")
+        return []
 
 
 def get_positions(service_type_ids: List[str], team_name: str) -> List[Dict[str, Any]]:
@@ -325,6 +419,34 @@ def get_positions(service_type_ids: List[str], team_name: str) -> List[Dict[str,
     result = list(positions_by_name.values())
     logging.info(f"Returning {len(result)} unique positions for team '{team_name}'")
     return result
+
+
+def get_positions_for_team_in_service_type(service_type_id: str, team_id: str) -> List[Dict[str, Any]]:
+    """Fetch positions for a specific team within a specific service type."""
+    session = get_pco_session()
+    if not session:
+        return []
+    
+    try:
+        positions_url = f"{PCO_API_BASE}/service_types/{service_type_id}/teams/{team_id}/team_positions"
+        response = _make_pco_request(session, positions_url)
+        if not response:
+            return []
+        positions_data = response.json()
+        
+        positions = []
+        for item in positions_data.get('data', []):
+            positions.append({
+                'id': item['id'],
+                'name': item['attributes']['name'],
+                'team_id': team_id,
+                'service_type_id': service_type_id
+            })
+        
+        return positions
+    except Exception as e:
+        logging.error(f"Error fetching positions for team {team_id} in service type {service_type_id}: {e}")
+        return []
 
 
 def _fetch_complete_plan_data(service_type_id: str, plan_id: str) -> Optional[Dict[str, Any]]:
@@ -738,6 +860,7 @@ def _build_plan_of_day_from_cache(service_type_id: str, plan_id: str, lead_time_
         result = {
             'plan_id': plan_id,
             'service_type_id': service_type_id,
+            'service_type_name': get_service_type_name(service_type_id),
             'start_time': earliest_time.isoformat(),
             'live_time': live_time.isoformat(),
             'names_by_slot': names_by_slot,
@@ -1068,6 +1191,7 @@ def _build_plan_of_day_for_service(service_type_id: str, lead_time_hours: int) -
         result = {
             'plan_id': earliest['plan_id'],
             'service_type_id': service_type_id,
+            'service_type_name': get_service_type_name(service_type_id),
             'title': earliest.get('title'),
             'start_time': earliest['start_time'].isoformat(),
             'live_time': live_time.isoformat(),

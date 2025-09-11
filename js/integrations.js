@@ -261,9 +261,12 @@ async function buildPCOStructure(serviceTypeIds) {
       const teamStructure = {
         name: team.name,
         id: team.id,
+        service_type_id: serviceTypeId,
         positions: positions.map(pos => ({
           name: pos.name,
-          id: pos.id
+          id: pos.id,
+          team_id: team.id,
+          service_type_id: serviceTypeId
         }))
       };
       

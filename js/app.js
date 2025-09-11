@@ -103,27 +103,39 @@ export function updateLiveServiceIndicator() {
     .then(full => {
       console.log('📊 updateLiveServiceIndicator: Received data:', full);
       
-      const planOfDay = full.plan_of_day || {};
+      const planOfDay = full.plan_of_day || [];
       console.log('📅 updateLiveServiceIndicator: plan_of_day data:', planOfDay);
       
-      // If multiple service types, pick the first entry for display
-      const firstKey = Object.keys(planOfDay)[0];
-      const pod = firstKey ? planOfDay[firstKey] : null;
+      // Find the live plan or the first plan if none are live
+      let pod = null;
+      if (Array.isArray(planOfDay)) {
+        // Look for a live plan first
+        pod = planOfDay.find(plan => plan.is_live);
+        // If no live plan, use the first plan
+        if (!pod && planOfDay.length > 0) {
+          pod = planOfDay[0];
+        }
+      } else {
+        // Fallback for old format (object with service type keys)
+        const firstKey = Object.keys(planOfDay)[0];
+        pod = firstKey ? planOfDay[firstKey] : null;
+      }
       console.log('🎯 updateLiveServiceIndicator: Selected plan of day:', pod);
       
-      if (pod && pod.names_by_slot) {
-        console.log('👥 updateLiveServiceIndicator: names_by_slot:', pod.names_by_slot);
-        console.log('👥 updateLiveServiceIndicator: slot count:', Object.keys(pod.names_by_slot).length);
+      if (pod && (pod.names_by_slot || pod.slot_assignments)) {
+        const slotAssignments = pod.names_by_slot || pod.slot_assignments;
+        console.log('👥 updateLiveServiceIndicator: slot assignments:', slotAssignments);
+        console.log('👥 updateLiveServiceIndicator: slot count:', Object.keys(slotAssignments).length);
       }
 
       const indicator = document.getElementById('live-service-indicator');
       const icon = document.getElementById('live-service-icon');
       const text = document.getElementById('live-service-text');
 
-      if (pod && pod.start_time && pod.live_time) {
+      if (pod && (pod.start_time || pod.service_time) && pod.live_time) {
         const now = new Date();
         const liveStart = new Date(pod.live_time);
-        const serviceStart = new Date(pod.start_time);
+        const serviceStart = new Date(pod.start_time || pod.service_time);
         // Service considered live if now between live_start and end of day of start
         const endOfDay = new Date(serviceStart);
         endOfDay.setHours(23, 59, 59, 999);
@@ -142,8 +154,17 @@ export function updateLiveServiceIndicator() {
         if (now >= liveStart && now <= endOfDay) {
           console.log('🟢 updateLiveServiceIndicator: Service is LIVE - updating UI');
           icon.style.display = 'inline-block';
-          text.innerHTML = `${pod.title || 'Service'} (${startTimeEST} - ${endTimeEST} EST)`;
+          // Use service type name instead of plan title
+          const serviceTypeName = pod.service_type_name || pod.title || 'Service';
+          text.innerHTML = `${serviceTypeName} (${startTimeEST} - ${endTimeEST} EST)`;
           indicator.className = 'text-white';
+          
+          // Apply slot assignments from PCO to the UI
+          const slotAssignments = pod.names_by_slot || pod.slot_assignments;
+          if (slotAssignments) {
+            console.log('👥 updateLiveServiceIndicator: Applying slot assignments to UI:', slotAssignments);
+            applySlotAssignmentsToUI(slotAssignments);
+          }
           
           // Force refresh the schedule cache when we detect a live service
           // This ensures the plan_of_day data is up to date
@@ -158,8 +179,17 @@ export function updateLiveServiceIndicator() {
           if (isManualPlan) {
             console.log('🎯 updateLiveServiceIndicator: Manual plan selected - showing in navbar');
             icon.style.display = 'inline-block';
-            text.innerHTML = `${pod.title || 'Service'} (Manual - ${startTimeEST} EST)`;
+            // Use service type name instead of plan title
+            const serviceTypeName = pod.service_type_name || pod.title || 'Service';
+            text.innerHTML = `${serviceTypeName} (Manual - ${startTimeEST} EST)`;
             indicator.className = 'text-info';
+            
+            // Apply slot assignments from PCO to the UI for manual plans too
+            const slotAssignments = pod.names_by_slot || pod.slot_assignments;
+            if (slotAssignments) {
+              console.log('👥 updateLiveServiceIndicator: Applying slot assignments to UI for manual plan:', slotAssignments);
+              applySlotAssignmentsToUI(slotAssignments);
+            }
           } else {
             console.log('🔴 updateLiveServiceIndicator: Service is NOT live - showing "No Service"');
             icon.style.display = 'none';
@@ -380,5 +410,40 @@ $(document).ready(() => {
       initConfigEditor();
       updateHash();
     }, 100);
+  }
+
+  /**
+   * Apply slot assignments from PCO to the UI
+   * @param {Object} namesBySlot - Object mapping slot numbers to person names
+   */
+  function applySlotAssignmentsToUI(namesBySlot) {
+    console.log('🎯 applySlotAssignmentsToUI: Applying assignments:', namesBySlot);
+    
+    // First, clear all slot names
+    for (let slotNum = 1; slotNum <= 6; slotNum++) {
+      const slotElement = document.querySelector(`[data-slot="${slotNum}"] .ext-name`);
+      if (slotElement) {
+        slotElement.value = '';
+      }
+    }
+    
+    // Then apply the assignments
+    Object.entries(namesBySlot).forEach(([slotNum, personName]) => {
+      const slotNumber = parseInt(slotNum);
+      const slotElement = document.querySelector(`[data-slot="${slotNumber}"] .ext-name`);
+      if (slotElement) {
+        slotElement.value = personName;
+        console.log(`✅ applySlotAssignmentsToUI: Applied slot ${slotNumber}: ${personName}`);
+      } else {
+        console.warn(`⚠️ applySlotAssignmentsToUI: Slot element not found for slot ${slotNumber}`);
+      }
+    });
+    
+    // Trigger a save to persist the changes
+    console.log('💾 applySlotAssignmentsToUI: Saving slot assignments to config');
+    const saveButton = document.getElementById('slotSave');
+    if (saveButton) {
+      saveButton.click();
+    }
   }
 });
