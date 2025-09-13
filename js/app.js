@@ -95,16 +95,12 @@ function groupTableBuilder(data) {
 }
 
 export function updateLiveServiceIndicator() {
-  console.log('🔄 updateLiveServiceIndicator: Starting update check');
   
   // Read plan_of_day from data.json (already queried elsewhere), fallback to a direct fetch if needed
   fetch(dataURL)
     .then(r => r.json())
     .then(full => {
-      console.log('📊 updateLiveServiceIndicator: Received data:', full);
-      
       const planOfDay = full.plan_of_day || [];
-      console.log('📅 updateLiveServiceIndicator: plan_of_day data:', planOfDay);
       
       // Find the live plan or the first plan if none are live
       let pod = null;
@@ -120,12 +116,9 @@ export function updateLiveServiceIndicator() {
         const firstKey = Object.keys(planOfDay)[0];
         pod = firstKey ? planOfDay[firstKey] : null;
       }
-      console.log('🎯 updateLiveServiceIndicator: Selected plan of day:', pod);
       
       if (pod && (pod.names_by_slot || pod.slot_assignments)) {
         const slotAssignments = pod.names_by_slot || pod.slot_assignments;
-        console.log('👥 updateLiveServiceIndicator: slot assignments:', slotAssignments);
-        console.log('👥 updateLiveServiceIndicator: slot count:', Object.keys(slotAssignments).length);
       }
 
       const indicator = document.getElementById('live-service-indicator');
@@ -140,19 +133,11 @@ export function updateLiveServiceIndicator() {
         const endOfDay = new Date(serviceStart);
         endOfDay.setHours(23, 59, 59, 999);
 
-        console.log('⏰ updateLiveServiceIndicator: Time comparison:', {
-          now: now.toISOString(),
-          liveStart: liveStart.toISOString(),
-          serviceStart: serviceStart.toISOString(),
-          endOfDay: endOfDay.toISOString(),
-          isLive: now >= liveStart && now <= endOfDay
-        });
 
         const startTimeEST = serviceStart.toLocaleString('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit', hour12: true });
         const endTimeEST = endOfDay.toLocaleString('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit', hour12: true });
 
         if (now >= liveStart && now <= endOfDay) {
-          console.log('🟢 updateLiveServiceIndicator: Service is LIVE - updating UI');
           icon.style.display = 'inline-block';
           // Use service type name instead of plan title
           const serviceTypeName = pod.service_type_name || pod.title || 'Service';
@@ -162,22 +147,17 @@ export function updateLiveServiceIndicator() {
           // Apply slot assignments from PCO to the UI
           const slotAssignments = pod.names_by_slot || pod.slot_assignments;
           if (slotAssignments) {
-            console.log('👥 updateLiveServiceIndicator: Applying slot assignments to UI:', slotAssignments);
             applySlotAssignmentsToUI(slotAssignments);
           }
           
           // Force refresh the schedule cache when we detect a live service
           // This ensures the plan_of_day data is up to date
-          console.log('🔄 updateLiveServiceIndicator: Triggering schedule cache refresh');
           fetch('/api/pco/force-refresh-schedule', { method: 'POST' })
-            .then(response => response.json())
-            .then(data => console.log('✅ updateLiveServiceIndicator: Schedule cache refresh result:', data))
-            .catch(err => console.log('❌ updateLiveServiceIndicator: Failed to refresh schedule cache:', err));
+            .catch(err => console.error('Failed to refresh schedule cache:', err));
         } else {
           // Check if this is a manually selected plan (even if not in live window)
           const isManualPlan = pod.plan_id && (now < liveStart);
           if (isManualPlan) {
-            console.log('🎯 updateLiveServiceIndicator: Manual plan selected - showing in navbar');
             icon.style.display = 'inline-block';
             // Use service type name instead of plan title
             const serviceTypeName = pod.service_type_name || pod.title || 'Service';
@@ -187,25 +167,22 @@ export function updateLiveServiceIndicator() {
             // Apply slot assignments from PCO to the UI for manual plans too
             const slotAssignments = pod.names_by_slot || pod.slot_assignments;
             if (slotAssignments) {
-              console.log('👥 updateLiveServiceIndicator: Applying slot assignments to UI for manual plan:', slotAssignments);
               applySlotAssignmentsToUI(slotAssignments);
             }
           } else {
-            console.log('🔴 updateLiveServiceIndicator: Service is NOT live - showing "No Service"');
             icon.style.display = 'none';
             text.innerHTML = 'No Service';
             indicator.className = 'text-muted';
           }
         }
       } else {
-        console.log('⚠️ updateLiveServiceIndicator: No valid plan of day data found');
         const icon = document.getElementById('live-service-icon');
         const text = document.getElementById('live-service-text');
         icon.style.display = 'none';
         text.innerHTML = 'No Service';
       }
     }).catch((error) => {
-      console.log('❌ updateLiveServiceIndicator: Error fetching data:', error);
+      console.error('Error fetching live service data:', error);
       const icon = document.getElementById('live-service-icon');
       const text = document.getElementById('live-service-text');
       icon.style.display = 'none';
@@ -412,38 +389,36 @@ $(document).ready(() => {
     }, 100);
   }
 
-  /**
-   * Apply slot assignments from PCO to the UI
-   * @param {Object} namesBySlot - Object mapping slot numbers to person names
-   */
-  function applySlotAssignmentsToUI(namesBySlot) {
-    console.log('🎯 applySlotAssignmentsToUI: Applying assignments:', namesBySlot);
-    
-    // First, clear all slot names
-    for (let slotNum = 1; slotNum <= 6; slotNum++) {
-      const slotElement = document.querySelector(`[data-slot="${slotNum}"] .ext-name`);
-      if (slotElement) {
-        slotElement.value = '';
-      }
-    }
-    
-    // Then apply the assignments
-    Object.entries(namesBySlot).forEach(([slotNum, personName]) => {
-      const slotNumber = parseInt(slotNum);
-      const slotElement = document.querySelector(`[data-slot="${slotNumber}"] .ext-name`);
-      if (slotElement) {
-        slotElement.value = personName;
-        console.log(`✅ applySlotAssignmentsToUI: Applied slot ${slotNumber}: ${personName}`);
-      } else {
-        console.warn(`⚠️ applySlotAssignmentsToUI: Slot element not found for slot ${slotNumber}`);
-      }
-    });
-    
-    // Trigger a save to persist the changes
-    console.log('💾 applySlotAssignmentsToUI: Saving slot assignments to config');
-    const saveButton = document.getElementById('slotSave');
-    if (saveButton) {
-      saveButton.click();
+});
+
+/**
+ * Apply slot assignments from PCO to the UI
+ * @param {Object} namesBySlot - Object mapping slot numbers to person names
+ */
+function applySlotAssignmentsToUI(namesBySlot) {
+  
+  // First, clear all slot names
+  for (let slotNum = 1; slotNum <= 6; slotNum++) {
+    const slotElement = document.querySelector(`[data-slot="${slotNum}"] .ext-name`);
+    if (slotElement) {
+      slotElement.value = '';
     }
   }
-});
+  
+  // Then apply the assignments
+  Object.entries(namesBySlot).forEach(([slotNum, personName]) => {
+    const slotNumber = parseInt(slotNum);
+    const slotElement = document.querySelector(`[data-slot="${slotNumber}"] .ext-name`);
+    if (slotElement) {
+      slotElement.value = personName;
+      } else {
+        console.warn(`Slot element not found for slot ${slotNumber}`);
+      }
+  });
+  
+  // Trigger a save to persist the changes
+  const saveButton = document.getElementById('slotSave');
+  if (saveButton) {
+    saveButton.click();
+  }
+}

@@ -688,12 +688,10 @@ canvas.slotgraph {
 
 .settings {
   display: none;
-  // background-color: var(--color-blue);
-  color: var(--color-black);
-  // margin-left: -15px;
-  // margin-right: -15px;
-  // padding: 3em;
+  background-color: var(--color-background);
+  color: var(--color-white);
   padding-top: 76px;
+  min-height: 100vh;
 }
 
 .settings .config-header {
@@ -703,11 +701,15 @@ canvas.slotgraph {
   margin-left: -5px;
   margin-right: -5px;
   border-radius: 12px 12px 0 0;
+  margin-bottom: 20px;
 }
 
 .settings .config-header h3 {
   padding: 1em;
   color: var(--color-white);
+  margin: 0;
+  font-family: 'IBM Plex Sans';
+  font-weight: 500;
 }
 
 .settings .config-footer {
@@ -717,6 +719,7 @@ canvas.slotgraph {
   margin-left: -5px;
   margin-right: -5px;
   border-radius: 0 0 12px 12px;
+  margin-bottom: 20px;
 }
 
 
@@ -738,8 +741,160 @@ canvas.slotgraph {
   padding-bottom: 1em;
 }
 
+/* Settings page content areas */
+.settings #discovered_list {
+  background-color: var(--color-black);
+  border: 1px solid var(--color-gray);
+  border-radius: 0 0 12px 12px;
+  padding: 1.25rem;
+  margin-left: -5px;
+  margin-right: -5px;
+  margin-bottom: 20px;
+}
+
+.settings #editor_holder {
+  background-color: var(--color-black);
+  border: 1px solid var(--color-gray);
+  border-radius: 0 0 12px 12px;
+  padding: 1.25rem;
+  margin-left: -5px;
+  margin-right: -5px;
+  margin-bottom: 20px;
+}
+
 .settings .navbar-toggler-icon {
   height: 100%;
+}
+
+/* Settings page button styling for consistency */
+.settings .btn {
+  border-radius: 8px;
+  font-family: 'IBM Plex Sans';
+  font-weight: 400;
+  padding: 0.5rem 1rem;
+  margin: 2px;
+}
+
+.settings .btn-primary {
+  background-color: var(--color-blue);
+  border-color: var(--color-blue);
+  color: var(--color-white);
+}
+
+.settings .btn-primary:hover {
+  background-color: #005a8a;
+  border-color: #005a8a;
+  color: var(--color-white);
+}
+
+.settings .btn-success {
+  background-color: var(--color-green);
+  border-color: var(--color-green);
+  color: var(--color-white);
+}
+
+.settings .btn-success:hover {
+  background-color: #5da069;
+  border-color: #5da069;
+  color: var(--color-white);
+}
+
+.settings .btn-danger {
+  background-color: var(--color-red);
+  border-color: var(--color-red);
+  color: var(--color-white);
+}
+
+.settings .btn-danger:hover {
+  background-color: #c82333;
+  border-color: #bd2130;
+  color: var(--color-white);
+}
+
+.settings .btn-warning {
+  background-color: var(--color-yellow);
+  border-color: var(--color-yellow);
+  color: var(--color-black);
+}
+
+.settings .btn-warning:hover {
+  background-color: #e0a800;
+  border-color: #d39e00;
+  color: var(--color-black);
+}
+
+.settings .btn-info {
+  background-color: var(--color-cyan);
+  border-color: var(--color-cyan);
+  color: var(--color-white);
+}
+
+.settings .btn-info:hover {
+  background-color: #138496;
+  border-color: #117a8b;
+  color: var(--color-white);
+}
+
+/* Settings page form styling for consistency */
+.settings .form-group {
+  margin-bottom: 15px;
+}
+
+.settings label {
+  color: var(--color-white);
+  margin-bottom: 5px;
+  font-family: 'IBM Plex Sans';
+  font-weight: 300;
+}
+
+.settings .form-control {
+  background-color: var(--color-black);
+  color: var(--color-white);
+  border: 1px solid var(--color-gray);
+  border-radius: 8px;
+  padding: 0.5rem 0.75rem;
+  font-family: 'IBM Plex Sans';
+  font-weight: 300;
+}
+
+.settings .form-control:focus {
+  background-color: var(--color-black);
+  color: var(--color-white);
+  border-color: var(--color-blue);
+  box-shadow: 0 0 0 0.2rem rgba(0, 100, 148, 0.25);
+}
+
+.settings .form-control::placeholder {
+  color: var(--color-gray);
+}
+
+.settings .text-muted {
+  color: var(--color-gray) !important;
+}
+
+.settings a {
+  color: var(--color-blue);
+}
+
+.settings a:hover {
+  color: var(--color-white);
+  text-decoration: none;
+}
+
+/* Settings page form-row button styling */
+.settings .form-row {
+  margin-left: 0;
+  margin-right: 0;
+  padding: 0;
+}
+
+.settings .form-row .col {
+  padding: 0 5px;
+}
+
+.settings .form-row .btn {
+  width: 100%;
+  margin: 2px 0;
 }
 
 .slot-number {
@@ -1154,19 +1309,24 @@ a:link, a:visited, a:hover, a:active {
   overflow: hidden;
 }
 
-.integrations-page .table th {
-  background-color: var(--color-black);
-  border-color: var(--color-gray);
+.integrations-page .table thead th {
+  background-color: var(--color-gray);
   color: var(--color-white);
+  border-bottom: 1px solid var(--color-gray);
   font-family: 'IBM Plex Sans';
   font-weight: 500;
 }
 
-.integrations-page .table td {
-  border-color: var(--color-gray);
+.integrations-page .table tbody td {
+  background-color: var(--color-black);
   color: var(--color-white);
+  border-bottom: 1px solid var(--color-gray);
   font-family: 'IBM Plex Sans';
   font-weight: 300;
+}
+
+.integrations-page .table tbody tr:hover {
+  background-color: rgba(255, 255, 255, 0.05);
 }
 
 .integrations-page .table-sm th,
@@ -1174,7 +1334,35 @@ a:link, a:visited, a:hover, a:active {
   padding: 0.5rem;
 }
 
+/* Status indicators styling */
+.integrations-page .ml-2 {
+  margin-left: 0.5rem;
+  font-family: 'IBM Plex Sans';
+  font-weight: 300;
+}
+
+.settings .ml-2 {
+  margin-left: 0.5rem;
+  font-family: 'IBM Plex Sans';
+  font-weight: 300;
+}
+
+/* Consistent spacing for both pages */
+.settings .row {
+  margin-left: -5px;
+  margin-right: -5px;
+}
+
+.integrations-page .row {
+  margin-left: -5px;
+  margin-right: -5px;
+}
+
 .integrations-page .text-success {
+  color: var(--color-green) !important;
+}
+
+.settings .text-success {
   color: var(--color-green) !important;
 }
 
@@ -1182,7 +1370,15 @@ a:link, a:visited, a:hover, a:active {
   color: var(--color-red) !important;
 }
 
+.settings .text-danger {
+  color: var(--color-red) !important;
+}
+
 .integrations-page .text-warning {
+  color: var(--color-yellow) !important;
+}
+
+.settings .text-warning {
   color: var(--color-yellow) !important;
 }
 

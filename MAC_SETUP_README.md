@@ -1,20 +1,24 @@
-# Micboard Mac Setup Script
+# Micboard Mac Setup Script - Production Ready
 
-This script (`mac_setup.sh`) provides a complete setup solution for Micboard on macOS, handling all dependencies and configuration from scratch.
+This script (`mac_setup.sh`) provides a complete production-ready setup solution for Micboard on macOS, handling all dependencies, configuration, and production features from scratch.
 
 ## What It Does
 
 The script automatically:
 
-1. **Installs Homebrew** (if not present)
-2. **Installs Node.js 20+** (required for frontend build tools)
-3. **Installs Python 3.12+** (required for the backend server)
-4. **Installs additional dependencies** (git, curl, wget)
-5. **Creates Python virtual environment** (`myenv/`)
-6. **Installs Python dependencies** (tornado, requests, etc.)
-7. **Installs Node.js dependencies** (webpack, babel, etc.)
-8. **Builds frontend assets** (compiles SCSS, bundles JS)
-9. **Creates helper scripts** for easy startup and OAuth setup
+1. **Checks system requirements** (macOS version, disk space, security)
+2. **Installs Homebrew** (if not present)
+3. **Installs Node.js 20+** (required for frontend build tools)
+4. **Installs Python 3.12+** (required for the backend server)
+5. **Installs additional dependencies** (git, curl, wget)
+6. **Creates Python virtual environment** (`myenv/`)
+7. **Installs Python dependencies** (tornado, requests, etc.)
+8. **Installs Node.js dependencies** (webpack, babel, etc.)
+9. **Builds frontend assets** (compiles SCSS, bundles JS)
+10. **Creates production scripts** (start, stop, monitor)
+11. **Sets up system service** (LaunchAgent for auto-start)
+12. **Creates monitoring tools** (health checks, logging)
+13. **Generates production configuration** (environment templates)
 
 ## Usage
 
@@ -87,11 +91,92 @@ After setup, use the generated startup script:
 
 After running the setup script, you'll have:
 
+### Core Application
 - `myenv/` - Python virtual environment
 - `node_modules/` - Node.js dependencies
 - `static/` - Built frontend assets
-- `start_micboard.sh` - Easy startup script
+
+### Production Scripts
+- `start_micboard.sh` - Production startup script with logging
+- `stop_micboard.sh` - Graceful shutdown script
+- `monitor_micboard.sh` - Health monitoring and status checking
 - `oauth_setup_template.sh` - OAuth configuration template
+
+### System Integration
+- `~/Library/LaunchAgents/com.micboard.server.plist` - macOS LaunchAgent for auto-start
+- `production.env` - Production environment configuration template
+
+### Logging & Monitoring
+- `setup.log` - Detailed setup process log
+- `micboard.log` - Server runtime log
+- `micboard.pid` - Process ID file for management
+
+## Production Features
+
+### 🚀 Auto-Start on Boot
+Enable Micboard to start automatically when your Mac boots:
+
+```bash
+# Enable auto-start
+launchctl load ~/Library/LaunchAgents/com.micboard.server.plist
+
+# Disable auto-start
+launchctl unload ~/Library/LaunchAgents/com.micboard.server.plist
+
+# Check if enabled
+launchctl list | grep micboard
+```
+
+### 📊 Monitoring & Management
+The setup creates several monitoring tools:
+
+```bash
+# Check server status
+./monitor_micboard.sh status
+
+# View recent logs
+./monitor_micboard.sh logs
+
+# Health check
+./monitor_micboard.sh health
+
+# Start server (with logging)
+./start_micboard.sh
+
+# Stop server (graceful shutdown)
+./stop_micboard.sh
+```
+
+### 🔧 Production Configuration
+Customize your production environment:
+
+```bash
+# Copy and edit production settings
+cp production.env .env
+nano .env
+
+# Key settings to review:
+# - SECRET_KEY (change from default)
+# - LOG_LEVEL (INFO, WARNING, ERROR)
+# - MICBOARD_PORT (default: 8058)
+# - Security settings
+```
+
+### 📝 Logging
+Comprehensive logging for production monitoring:
+
+- **Setup Log**: `setup.log` - Complete installation process
+- **Server Log**: `micboard.log` - Runtime logs with timestamps
+- **Health Checks**: Built-in endpoint monitoring
+- **Process Management**: PID file for reliable process control
+
+### 🛡️ Security Features
+Production-ready security considerations:
+
+- **Non-root execution** - Scripts warn against running as root
+- **Secure defaults** - Production configuration template includes security settings
+- **Environment isolation** - Python virtual environment
+- **Process management** - Proper PID handling and graceful shutdowns
 
 ## Troubleshooting
 

@@ -1,6 +1,8 @@
 FROM python:3.12-slim
 
 LABEL maintainer="Karl Swanson <karlcswanson@gmail.com>"
+LABEL description="Micboard - A visual monitoring tool for network enabled Shure devices"
+LABEL version="2.0.0"
 
 WORKDIR /usr/src/app
 
@@ -33,6 +35,14 @@ RUN npm run build
 RUN useradd -m -u 1000 micboard && chown -R micboard:micboard /usr/src/app
 USER micboard
 
+# Create config directory
+RUN mkdir -p /home/micboard/.local/share/micboard
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:8058/api/health || exit 1
+
 EXPOSE 8058
 
+# Use exec form for better signal handling
 CMD ["python3", "py/micboard.py"]

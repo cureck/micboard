@@ -150,31 +150,11 @@ class PCOScheduler:
         return all_plans
     
     def _fetch_plan_assignments(self, service_type_id: str, plan_id: str) -> List[Dict]:
-        """Fetch assignments (plan_people) for a specific plan"""
-        # Try plan_people endpoint first
-        url = f"{PCO_API_BASE}/service_types/{service_type_id}/plans/{plan_id}/plan_people"
-        response = self._make_request(url)
-        
-        if response:
-            data = response.json()
-            assignments = []
-            
-            for item in data.get('data', []):
-                attributes = item.get('attributes', {})
-                # Include all assignments regardless of status for now
-                assignments.append({
-                    'person_name': attributes.get('name'),
-                    'position_name': attributes.get('team_position_name'),
-                    'status': attributes.get('status')
-                })
-            
-            logging.info(f"Found {len(assignments)} assignments for plan {plan_id}")
-            return assignments
-        
-        # If plan_people fails, try team_members endpoint as fallback
-        logging.info(f"plan_people endpoint failed for plan {plan_id}, trying team_members...")
+        """Fetch assignments using team_members endpoint with includes to get individual position names"""
+        # Use team_members endpoint with includes to get individual position names
         url = f"{PCO_API_BASE}/service_types/{service_type_id}/plans/{plan_id}/team_members"
-        response = self._make_request(url)
+        params = {'include': 'person,team_position'}
+        response = self._make_request(url, params)
         
         if not response:
             logging.warning(f"No assignments found for plan {plan_id}")
@@ -183,12 +163,38 @@ class PCOScheduler:
         data = response.json()
         assignments = []
         
+        # Build lookup for included data
+        included = {}
+        for item in data.get('included', []):
+            key = f"{item['type']}-{item['id']}"
+            included[key] = item
+        
         for item in data.get('data', []):
-            attributes = item.get('attributes', {})
+            # Get person name
+            person_ref = item.get('relationships', {}).get('person', {}).get('data', {})
+            if person_ref and 'type' in person_ref and 'id' in person_ref:
+                person_key = f"{person_ref['type']}-{person_ref['id']}"
+                person_data = included.get(person_key, {})
+                person_name = person_data.get('attributes', {}).get('name', '')
+            else:
+                person_name = ''
+            
+            # Get individual position name (not team position name)
+            position_ref = item.get('relationships', {}).get('team_position', {}).get('data', {})
+            if position_ref and 'type' in position_ref and 'id' in position_ref:
+                position_key = f"{position_ref['type']}-{position_ref['id']}"
+                position_data = included.get(position_key, {})
+                position_name = position_data.get('attributes', {}).get('name', '')
+            else:
+                position_name = ''
+            
+            # Get status
+            status = item.get('attributes', {}).get('status', 'C')
+            
             assignments.append({
-                'person_name': attributes.get('name'),
-                'position_name': attributes.get('team_position_name'),
-                'status': attributes.get('status', 'C')
+                'person_name': person_name,
+                'position_name': position_name,
+                'status': status
             })
         
         logging.info(f"Found {len(assignments)} team members for plan {plan_id}")
@@ -210,10 +216,7 @@ class PCOScheduler:
             position_name = assignment.get('position_name', '')
             person_name = assignment.get('person_name', '')
             
-            logging.info(f"_map_assignments_to_slots: Processing assignment: {person_name} -> {position_name}")
-            
             if not position_name or not person_name:
-                logging.info(f"_map_assignments_to_slots: Skipping assignment due to missing data")
                 continue
             
             # Check if this position is mapped to a slot using service-type-specific mapping
@@ -221,8 +224,6 @@ class PCOScheduler:
             if slot_number:
                 slot_assignments[slot_number] = person_name
                 logging.info(f"Mapped {person_name} ({position_name}) to slot {slot_number}")
-            else:
-                logging.info(f"No slot mapping found for position: {position_name}")
         
         logging.info(f"_map_assignments_to_slots: Final slot assignments: {slot_assignments}")
         return slot_assignments
@@ -333,8 +334,7 @@ class PCOScheduler:
             
             # Check reuse rules for this service type
             for rule in st.get('reuse_rules', []):
-                if (rule.get('position_name') == position_name and 
-                    rule.get('service_type_id') == service_type_id):
+                if rule.get('position_name') == position_name:
                     slot_number = rule.get('slot')
                     if slot_number:
                         logging.info(f"Found service-type-specific mapping: {position_name} -> slot {slot_number} for service type {service_type_id}")
@@ -343,8 +343,7 @@ class PCOScheduler:
             # Check teams/positions for this service type
             for team in st.get('teams', []):
                 for position in team.get('positions', []):
-                    if (position.get('name') == position_name and 
-                        position.get('service_type_id') == service_type_id):
+                    if position.get('name') == position_name:
                         slot_number = position.get('slot')
                         if slot_number:
                             logging.info(f"Found team/position mapping: {position_name} -> slot {slot_number} for service type {service_type_id}")

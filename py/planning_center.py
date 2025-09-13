@@ -833,10 +833,10 @@ def _build_plan_of_day_from_cache(service_type_id: str, plan_id: str, lead_time_
                                 names_by_slot[mic_number] = person_name
                                 logging.info(f"Mapped {person_name} (position: {position_name}) to slot {mic_number}")
                         except (ValueError, IndexError):
-                            logging.debug(f"Could not parse mic number from position: {position_name}")
+                            pass
                     
                     # Also check for exact position name matches
-                    elif position_name == 'Mic 1':
+                    if position_name == 'Mic 1':
                         names_by_slot[1] = person_name
                         logging.info(f"Mapped {person_name} to slot 1 (Mic 1)")
                     elif position_name == 'Mic 2':
@@ -855,7 +855,7 @@ def _build_plan_of_day_from_cache(service_type_id: str, plan_id: str, lead_time_
                         names_by_slot[6] = person_name
                         logging.info(f"Mapped {person_name} to slot 6 (Mic 6)")
                     else:
-                        logging.debug(f"Position '{position_name}' does not match Mic N pattern")
+                        pass
         
         result = {
             'plan_id': plan_id,
@@ -890,7 +890,6 @@ def _find_assignment_in_cache(assignments: List[Dict], slot_mapping: Dict[str, A
         if not position_name and 'position_id' in slot_mapping:
             # We would need to look up the position name from the ID,
             # but that would require API calls. For now, skip.
-            logging.debug(f"Skipping ID-based mapping as we need name-based matching")
             return None
         
         if position_name:
@@ -1117,8 +1116,8 @@ def _build_plan_of_day_for_service(service_type_id: str, lead_time_hours: int) -
                     # Try cached assignment first, fall back to API call only if absolutely necessary
                     person_name = _find_assignment_in_cache_from_plan_id(earliest['plan_id'], mapping)
                     if not person_name:
-                        logging.debug(f"Cache miss for assignment in plan {earliest['plan_id']}, skipping API call to avoid duplicate requests")
                         # Don't make API call here - the data should have been fetched during build_daily_schedule
+                        pass
                     if person_name:
                         names_by_slot[slot_number] = person_name
             # Reuse rules (name-based)
@@ -1133,8 +1132,8 @@ def _build_plan_of_day_for_service(service_type_id: str, lead_time_hours: int) -
                 # Try cached assignment first, fall back to API call only if absolutely necessary
                 person_name = _find_assignment_in_cache_from_plan_id(earliest['plan_id'], mapping)
                 if not person_name:
-                    logging.debug(f"Cache miss for reuse rule assignment in plan {earliest['plan_id']}, skipping API call to avoid duplicate requests")
                     # Don't make API call here - the data should have been fetched during build_daily_schedule
+                    pass
                 if person_name:
                     names_by_slot[slot_number] = person_name
         
@@ -1164,10 +1163,10 @@ def _build_plan_of_day_for_service(service_type_id: str, lead_time_hours: int) -
                                     names_by_slot[mic_number] = person_name
                                     logging.info(f"Mapped {person_name} (position: {position_name}) to slot {mic_number}")
                             except (ValueError, IndexError):
-                                logging.debug(f"Could not parse mic number from position: {position_name}")
+                                pass
                         
                         # Also check for exact position name matches
-                        elif position_name == 'Mic 1':
+                        if position_name == 'Mic 1':
                             names_by_slot[1] = person_name
                             logging.info(f"Mapped {person_name} to slot 1 (Mic 1)")
                         elif position_name == 'Mic 2':
@@ -1186,7 +1185,7 @@ def _build_plan_of_day_for_service(service_type_id: str, lead_time_hours: int) -
                             names_by_slot[6] = person_name
                             logging.info(f"Mapped {person_name} to slot 6 (Mic 6)")
                         else:
-                            logging.debug(f"Position '{position_name}' does not match Mic N pattern")
+                            pass
 
         result = {
             'plan_id': earliest['plan_id'],
@@ -1626,6 +1625,7 @@ def find_live_plan(service_type_id: str, lead_time_hours: int) -> Optional[Dict[
 def _find_assignment(plan_id: str, service_type_id: str, slot_mapping: Dict[str, Any]) -> Optional[str]:
     """Find a person assignment for a slot based on its mapping configuration."""
     try:
+        
         session = get_pco_session()
         if not session:
             logging.warning(f"_find_assignment: No PCO session available for plan {plan_id}")
@@ -1653,7 +1653,6 @@ def _find_assignment(plan_id: str, service_type_id: str, slot_mapping: Dict[str,
                 team = team_position.get('team', {})
                 position = team_position.get('position', {})
                 
-                logging.debug(f"_find_assignment: Checking assignment - team_id: {team.get('id')}, position_id: {position.get('id')}, person: {person.get('name')}")
                 
                 if (team.get('id') == slot_mapping['team_id'] and
                     position.get('id') == slot_mapping['position_id']):
@@ -1665,31 +1664,94 @@ def _find_assignment(plan_id: str, service_type_id: str, slot_mapping: Dict[str,
         elif 'team_name' in slot_mapping and 'position_name' in slot_mapping:
             logging.info(f"_find_assignment: Looking for name-based assignment - team_name: {slot_mapping['team_name']}, position_name: {slot_mapping['position_name']}")
             
-            # Get assignments for this plan
-            url = f"{PCO_API_BASE}/service_types/{service_type_id}/plans/{plan_id}/plan_people"
-            response = _make_pco_request(session, url)
-            if not response:
-                logging.warning(f"_find_assignment: No response for plan_people API call for plan {plan_id}")
-                return None
+            # Try team_members endpoint first (includes team and position data)
+            url = f"{PCO_API_BASE}/service_types/{service_type_id}/plans/{plan_id}/team_members"
+            params = {'include': 'person,team_position'}
+            response = _make_pco_request(session, url, params)
             
-            data = response.json()
-            assignments = data.get('data', [])
-            logging.info(f"_find_assignment: Found {len(assignments)} assignments for plan {plan_id}")
-            
-            # Find assignment for this team/position by name
-            for assignment in assignments:
-                person = assignment.get('person', {})
-                team_position = assignment.get('team_position', {})
-                team = team_position.get('team', {})
-                position = team_position.get('position', {})
+            if response:
+                data = response.json()
+                assignments = data.get('data', [])
+                included = {}
+                for item in data.get('included', []):
+                    key = f"{item['type']}-{item['id']}"
+                    included[key] = item
                 
-                logging.debug(f"_find_assignment: Checking assignment - team_name: {team.get('name')}, position_name: {position.get('name')}, person: {person.get('name')}")
+                logging.info(f"_find_assignment: Found {len(assignments)} team members for plan {plan_id}")
                 
-                if (team.get('name') == slot_mapping['team_name'] and
-                    position.get('name') == slot_mapping['position_name']):
-                    person_name = person.get('name')
-                    logging.info(f"_find_assignment: Found matching assignment: {person_name}")
-                    return person_name
+                # Find assignment for this team/position by name
+                for assignment in assignments:
+                    # Get person name
+                    person_ref = assignment.get('relationships', {}).get('person', {}).get('data', {})
+                    if not person_ref or 'type' not in person_ref or 'id' not in person_ref:
+                        continue
+                    person_key = f"{person_ref['type']}-{person_ref['id']}"
+                    person_data = included.get(person_key, {})
+                    person_name = person_data.get('attributes', {}).get('name', '')
+                    
+                    # Get position name
+                    position_ref = assignment.get('relationships', {}).get('team_position', {}).get('data', {})
+                    if not position_ref or 'type' not in position_ref or 'id' not in position_ref:
+                        continue
+                    position_key = f"{position_ref['type']}-{position_ref['id']}"
+                    position_data = included.get(position_key, {})
+                    position_name = position_data.get('attributes', {}).get('name', '')
+                    
+                    # Get team name
+                    team_ref = assignment.get('relationships', {}).get('team', {}).get('data', {})
+                    if not team_ref or 'type' not in team_ref or 'id' not in team_ref:
+                        continue
+                    team_key = f"{team_ref['type']}-{team_ref['id']}"
+                    team_data = included.get(team_key, {})
+                    team_name = team_data.get('attributes', {}).get('name', '')
+                    
+                    # Normalize case for comparison
+                    normalized_team_name = team_name.lower().strip() if team_name else ""
+                    normalized_position_name = position_name.lower().strip() if position_name else ""
+                    normalized_mapping_team = slot_mapping['team_name'].lower().strip() if slot_mapping.get('team_name') else ""
+                    normalized_mapping_position = slot_mapping['position_name'].lower().strip() if slot_mapping.get('position_name') else ""
+                    
+                    if (normalized_team_name == normalized_mapping_team and 
+                        normalized_position_name == normalized_mapping_position):
+                        logging.info(f"_find_assignment: Found matching assignment: {person_name} for {team_name} - {position_name}")
+                        return person_name
+            else:
+                # Fallback to plan_people endpoint
+                logging.info(f"_find_assignment: team_members failed, trying plan_people...")
+                url = f"{PCO_API_BASE}/service_types/{service_type_id}/plans/{plan_id}/plan_people"
+                response = _make_pco_request(session, url)
+                if not response:
+                    logging.warning(f"_find_assignment: No response for plan_people API call for plan {plan_id}")
+                    return None
+                
+                data = response.json()
+                assignments = data.get('data', [])
+                logging.info(f"_find_assignment: Found {len(assignments)} assignments for plan {plan_id}")
+                
+                # Find assignment for this team/position by name
+                for assignment in assignments:
+                    # The plan_people endpoint returns data in attributes
+                    attributes = assignment.get('attributes', {})
+                    person_name = attributes.get('name', '')
+                    position_name = attributes.get('team_position_name', '')
+                    
+                    
+                    # For plan_people endpoint, we need to get team name from relationships
+                    relationships = assignment.get('relationships', {})
+                    team_ref = relationships.get('team', {}).get('data', {})
+                    team_id = team_ref.get('id', '')
+                    
+                    # Normalize case for comparison
+                    normalized_position_name = position_name.lower().strip() if position_name else ""
+                    normalized_mapping_position = slot_mapping['position_name'].lower().strip() if slot_mapping.get('position_name') else ""
+                    normalized_mapping_team = slot_mapping['team_name'].lower().strip() if slot_mapping.get('team_name') else ""
+                    
+                    # For plan_people endpoint, we need to get team name from relationships
+                    # For now, let's try to match by position name only since we know the team is "Band"
+                    if (normalized_position_name == normalized_mapping_position and 
+                        normalized_mapping_team == 'band'):
+                        logging.info(f"_find_assignment: Found matching assignment: {person_name} for position {position_name}")
+                        return person_name
         
         logging.warning(f"_find_assignment: No matching assignment found for plan {plan_id} with mapping {slot_mapping}")
         return None

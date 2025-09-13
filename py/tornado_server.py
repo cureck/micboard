@@ -211,8 +211,13 @@ class PCOTeamsHandler(web.RequestHandler):
         if not service_type_ids:
             service_type_ids = self.get_argument('service_type_ids', '').split(',')
         
+        logging.info(f"PCOTeamsHandler: Received request for service_type_ids: {service_type_ids}")
+        
         self.set_header('Content-Type', 'application/json')
         teams = planning_center.get_teams(service_type_ids)
+        logging.info(f"PCOTeamsHandler: Returning {len(teams)} teams for service types {service_type_ids}")
+        
+        
         self.write(json.dumps(teams))
 
 
@@ -224,11 +229,13 @@ class PCOPositionsHandler(web.RequestHandler):
             service_type_ids = self.get_argument('service_type_ids', '').split(',')
         team_name = self.get_argument('team_name')
         
-        logging.debug(f"PCOPositionsHandler: Received request for team '{team_name}' with service_type_ids: {service_type_ids}")
+        logging.info(f"PCOPositionsHandler: Received request for team '{team_name}' with service_type_ids: {service_type_ids}")
         
         self.set_header('Content-Type', 'application/json')
         positions = planning_center.get_positions(service_type_ids, team_name)
-        logging.debug(f"PCOPositionsHandler: Returning {len(positions)} positions")
+        logging.info(f"PCOPositionsHandler: Returning {len(positions)} positions for team '{team_name}' across service types {service_type_ids}")
+        
+        
         self.write(json.dumps(positions))
 
 
@@ -238,9 +245,6 @@ class PCOAuthHandler(web.RequestHandler):
         # Get current credentials
         client_id, client_secret = planning_center.get_pco_credentials()
         
-        # Debug logging
-        logging.debug(f"PCO Auth - Client ID: {client_id[:10]}... (length: {len(client_id)})")
-        logging.debug(f"PCO Auth - Client Secret: {'*' * len(client_secret) if client_secret else 'None'} (length: {len(client_secret)})")
         
         if not client_id or not client_secret:
             self.set_status(400)
@@ -1357,11 +1361,6 @@ class OAuthCredentialsHandler(web.RequestHandler):
         try:
             data = json.loads(self.request.body)
             
-            # Debug logging
-            logging.debug(f"OAuth Credentials - PCO Client ID: {data.get('pco_client_id', '')[:10]}... (length: {len(data.get('pco_client_id', ''))})")
-            logging.debug(f"OAuth Credentials - PCO Client Secret: {'*' * len(data.get('pco_client_secret', ''))} (length: {len(data.get('pco_client_secret', ''))})")
-            logging.debug(f"OAuth Credentials - Google Client ID: {data.get('google_client_id', '')[:10]}... (length: {len(data.get('google_client_id', ''))})")
-            logging.debug(f"OAuth Credentials - Google Client Secret: {'*' * len(data.get('google_client_secret', ''))} (length: {len(data.get('google_client_secret', ''))})")
             
             # Store credentials in environment variables for this session
             if data.get('pco_client_id'):
@@ -1392,6 +1391,71 @@ class OAuthCredentialsHandler(web.RequestHandler):
             self.write(json.dumps({'error': str(e)}))
 
 
+class PCOServiceTypeDebugHandler(web.RequestHandler):
+    """Handler for debugging specific service type issues."""
+    def get(self):
+        try:
+            import planning_center
+            import config
+            
+            service_type_id = self.get_argument('service_type_id', '')
+            if not service_type_id:
+                self.write(json.dumps({'error': 'service_type_id parameter required'}))
+                return
+            
+            debug_info = {
+                'service_type_id': service_type_id,
+                'teams': [],
+                'positions': [],
+                'error': None
+            }
+            
+            # Get teams for this service type
+            try:
+                teams = planning_center.get_teams_for_service_type(service_type_id)
+                debug_info['teams'] = teams
+                logging.info(f"Found {len(teams)} teams for service type {service_type_id}")
+                
+                # For each team, get positions
+                for team in teams:
+                    team_id = team['id']
+                    team_name = team['name']
+                    
+                    positions = planning_center.get_positions_for_team_in_service_type(service_type_id, team_id)
+                    debug_info['positions'].extend(positions)
+                    logging.info(f"Found {len(positions)} positions for team '{team_name}' (ID: {team_id}) in service type {service_type_id}")
+                    
+            except Exception as e:
+                debug_info['error'] = str(e)
+                logging.error(f"Error debugging service type {service_type_id}: {e}")
+            
+            self.set_header('Content-Type', 'application/json')
+            self.write(json.dumps(debug_info))
+            
+        except Exception as e:
+            logging.error(f"Error in PCOServiceTypeDebugHandler: {e}")
+            self.set_status(500)
+            self.write(json.dumps({'error': str(e)}))
+
+
+
+class HealthCheckHandler(web.RequestHandler):
+    def get(self):
+        """Health check endpoint for Docker and monitoring"""
+        try:
+            # Basic health check - server is responding
+            self.write({
+                'status': 'healthy',
+                'timestamp': datetime.now(timezone.utc).isoformat(),
+                'version': '2.0.0'
+            })
+        except Exception as e:
+            self.set_status(500)
+            self.write({
+                'status': 'unhealthy',
+                'error': str(e),
+                'timestamp': datetime.now(timezone.utc).isoformat()
+            })
 
 # https://stackoverflow.com/questions/12031007/disable-static-file-caching-in-tornado
 class NoCacheHandler(web.StaticFileHandler):
@@ -1417,6 +1481,7 @@ def twisted():
         (r'/api/config', ConfigHandler),
         (r'/api/integrations', IntegrationsConfigHandler),
         (r'/api/oauth-credentials', OAuthCredentialsHandler),
+        (r'/api/health', HealthCheckHandler),
         (r'/api/pco/service-types', PCOServiceTypesHandler),
         (r'/api/pco/teams', PCOTeamsHandler),
         (r'/api/pco/positions', PCOPositionsHandler),
@@ -1430,6 +1495,7 @@ def twisted():
         (r'/api/pco/set-manual-plan', pco_endpoints.PCOSetManualPlanHandler),
         (r'/api/pco/clear-manual-plan', pco_endpoints.PCOClearManualPlanHandler),
         (r'/api/pco/debug', PCODebugHandler),
+        (r'/api/pco/debug-service-type', PCOServiceTypeDebugHandler),
         
         # New simplified PCO endpoints
         (r'/api/pco/upcoming-plans', pco_endpoints.PCOUpcomingPlansHandler),
