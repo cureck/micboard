@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Debug Positions for Service Type 769651</title>
+    <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+</head>
+<body>
+    <h1>Debug Positions for Service Type 769651</h1>
+    
+    <div id="status">Loading...</div>
+    
+    <h2>Service Type 769651 Teams and Positions</h2>
+    <div id="results"></div>
+    
+    <script>
+        async function debugServiceType769651() {
+            const status = $('#status');
+            const results = $('#results');
+            
+            try {
+                status.text('Testing API endpoints...');
+                
+                // Test 1: Get teams for service type 769651
+                status.text('Getting teams for service type 769651...');
+                const teamsResponse = await fetch('/api/pco/teams?service_type_ids[]=769651');
+                const teams = await teamsResponse.json();
+                
+                results.append(`<h3>Teams Found: ${teams.length}</h3>`);
+                results.append('<ul>');
+                teams.forEach(team => {
+                    results.append(`<li><strong>${team.name}</strong> (ID: ${team.id})</li>`);
+                });
+                results.append('</ul>');
+                
+                // Test 2: Get positions for first team
+                if (teams.length > 0) {
+                    const testTeam = teams[0];
+                    status.text(`Getting positions for team: ${testTeam.name}...`);
+                    
+                    const positionsResponse = await fetch(`/api/pco/positions?service_type_ids[]=769651&team_name=${encodeURIComponent(testTeam.name)}`);
+                    const positions = await positionsResponse.json();
+                    
+                    results.append(`<h3>Positions for Team "${testTeam.name}": ${positions.length}</h3>`);
+                    results.append('<ul>');
+                    positions.forEach(pos => {
+                        results.append(`<li><strong>${pos.name}</strong> (ID: ${pos.id}, Service Type: ${pos.service_type_id})</li>`);
+                    });
+                    results.append('</ul>');
+                }
+                
+                // Test 3: Check integrations config
+                status.text('Checking integrations config...');
+                const integrationsResponse = await fetch('/api/integrations');
+                const integrations = await integrationsResponse.json();
+                
+                const serviceType769651 = integrations.planning_center?.service_types?.find(st => st.id === '769651');
+                if (serviceType769651) {
+                    results.append(`<h3>Service Type 769651 in Config</h3>`);
+                    results.append(`<p>Teams in config: ${serviceType769651.teams?.length || 0}</p>`);
+                    
+                    if (serviceType769651.teams && serviceType769651.teams.length > 0) {
+                        results.append('<h4>Teams in Config:</h4><ul>');
+                        serviceType769651.teams.forEach(team => {
+                            results.append(`<li><strong>${team.name}</strong> - ${team.positions?.length || 0} positions</li>`);
+                        });
+                        results.append('</ul>');
+                    }
+                } else {
+                    results.append('<h3>Service Type 769651 NOT found in config</h3>');
+                }
+                
+                status.text('Debug complete!');
+                
+            } catch (error) {
+                status.text(`Error: ${error.message}`);
+                console.error('Debug error:', error);
+            }
+        }
+        
+        // Run debug when page loads
+        $(document).ready(() => {
+            debugServiceType769651();
+        });
+    </script>
+</body>
+</html>

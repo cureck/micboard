@@ -1,11 +1,27 @@
-version: '2'
+version: '3.8'
 
 services:
   # -------- Micboard -----------
   micboard:
-    image: micboard
+    build: .
     container_name: micboard
+    restart: unless-stopped
     ports:
       - '8058:8058'
     volumes:
-      - ./config:/root/.local/share/micboard
+      - micboard_config:/home/micboard/.local/share/micboard
+      - micboard_logs:/usr/src/app/logs
+    environment:
+      - PYTHONUNBUFFERED=1
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8058/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+volumes:
+  micboard_config:
+    driver: local
+  micboard_logs:
+    driver: local

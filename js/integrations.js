@@ -181,6 +181,9 @@ function loadPCOSettings() {
       const selectedTypes = pcoConfig.service_types || [];
       const selectedTypeIds = selectedTypes.map(st => st.id);
       
+      console.log('loadPCOSettings: Selected service types from config:', selectedTypeIds);
+      console.log('loadPCOSettings: Selected service types details:', selectedTypes);
+      
       types.forEach(type => {
         const option = $('<option>')
           .val(type.id)
@@ -213,6 +216,8 @@ function loadTeamsAndPositions(serviceTypeIds) {
     return;
   }
   
+  console.log('loadTeamsAndPositions: Loading teams and building structure for service types:', serviceTypeIds);
+  
   // Load teams
   const teamsUrl = `/api/pco/teams?${serviceTypeIds.map(id => `service_type_ids[]=${id}`).join('&')}`;
   fetch(teamsUrl)
@@ -222,6 +227,10 @@ function loadTeamsAndPositions(serviceTypeIds) {
       teams.forEach(team => {
         allTeams[team.name] = team;
       });
+      
+      // Also build the complete PCO structure with positions
+      console.log('loadTeamsAndPositions: Building complete PCO structure...');
+      buildPCOStructure(serviceTypeIds);
     })
     .catch(error => {
       console.error('Error loading teams:', error);
@@ -243,6 +252,7 @@ async function buildPCOStructure(serviceTypeIds) {
     const teamsResponse = await fetch(teamsUrl);
     const teams = await teamsResponse.json();
     
+    
     const serviceTypeStructure = {
       id: serviceTypeId,
       teams: [],
@@ -258,6 +268,7 @@ async function buildPCOStructure(serviceTypeIds) {
       const positionsResponse = await fetch(positionsUrl);
       const positions = await positionsResponse.json();
       
+      
       const teamStructure = {
         name: team.name,
         id: team.id,
@@ -272,6 +283,7 @@ async function buildPCOStructure(serviceTypeIds) {
       
       serviceTypeStructure.teams.push(teamStructure);
     }
+    
     
     updatedServiceTypes.push(serviceTypeStructure);
   }

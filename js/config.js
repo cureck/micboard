@@ -428,6 +428,7 @@ function loadPositionsForTeamInSettings(teamName, positionSelect) {
         
         for (const serviceType of pcoConfig.service_types) {
           if (selectedServiceTypes.includes(serviceType.id)) {
+            
             for (const team of serviceType.teams || []) {
               if (team.name === teamName) {
                 positions.push(...(team.positions || []));
