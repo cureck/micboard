@@ -1332,8 +1332,16 @@ class IntegrationsConfigHandler(web.RequestHandler):
         if 'integrations' not in config.config_tree:
             config.config_tree['integrations'] = {}
         
-        # Update config
-        config.config_tree['integrations'].update(data)
+        # Deep-merge planning_center/google_drive to avoid dropping existing keys (e.g., client_id/secret)
+        for key, value in data.items():
+            if key in ['planning_center', 'google_drive'] and isinstance(value, dict):
+                existing = config.config_tree['integrations'].get(key, {})
+                merged = existing.copy()
+                merged.update(value)
+                config.config_tree['integrations'][key] = merged
+            else:
+                # Fallback to shallow set for other integration sections
+                config.config_tree['integrations'][key] = value
         config.save_current_config()
         
         # No legacy Planning Center threads here; new scheduler runs separately
@@ -1390,6 +1398,20 @@ class OAuthCredentialsHandler(web.RequestHandler):
             
             config.save_current_config()
             
+            # Also mirror credentials under integrations.planning_center for UI authorization state
+            try:
+                if 'integrations' not in config.config_tree:
+                    config.config_tree['integrations'] = {}
+                if 'planning_center' not in config.config_tree['integrations']:
+                    config.config_tree['integrations']['planning_center'] = {}
+                if data.get('pco_client_id'):
+                    config.config_tree['integrations']['planning_center']['client_id'] = data.get('pco_client_id')
+                if data.get('pco_client_secret'):
+                    config.config_tree['integrations']['planning_center']['client_secret'] = data.get('pco_client_secret')
+                config.save_current_config()
+            except Exception as e:
+                logging.error(f"Failed to mirror PCO credentials into integrations block: {e}")
+
             self.write(json.dumps({'success': True}))
         except Exception as e:
             self.set_status(500)

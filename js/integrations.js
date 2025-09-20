@@ -49,6 +49,9 @@ export function initIntegrationsUI() {
   // Set up event handlers (idempotent)
   setupEventHandlers();
   
+  // Kick an immediate refresh of the scheduler so plan-of-day is available in UI
+  fetch('/api/pco/refresh-schedule', { method: 'POST' }).catch(() => {});
+  
   // Show loading message for schedule
   const scheduleStatusElement = document.getElementById('pco-schedule-status');
   if (scheduleStatusElement) {
@@ -132,6 +135,13 @@ function loadIntegrationsConfig() {
     .then(response => response.json())
     .then(data => {
       integrationsConfig = data;
+      const pcoCfg = integrationsConfig.planning_center || {};
+      // Consider authorized if we have either oauth creds mirrored or tokens present
+      const hasCreds = !!(pcoCfg.client_id && pcoCfg.client_secret);
+      const statusEl = document.getElementById('pco-auth-status');
+      if (statusEl) {
+        statusEl.innerHTML = hasCreds ? '<span class="text-success">Authorized</span>' : '<span class="text-muted">Not authorized</span>';
+      }
       updateUI();
     })
     .catch(error => {
