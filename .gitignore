@@ -32,3 +32,4 @@ __pycache__/
 oauth_setup_real.bat
 oauth_setup_real.sh
 .env.local
+config.json
