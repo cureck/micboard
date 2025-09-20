@@ -276,8 +276,11 @@ class PCOAuthHandler(web.RequestHandler):
             config.config_tree['integrations']['planning_center']['client_secret'] = client_secret
             config.save_current_config()
             
-            # Start sync thread
-            planning_center.start_sync_thread()
+            # Initialize the new scheduler with updated credentials instead of legacy threads
+            try:
+                pco_endpoints.init_pco_scheduler()
+            except Exception as e:
+                logging.error(f"Failed to initialize new PCO scheduler after auth: {e}")
             
             self.write(json.dumps({
                 'success': True,
@@ -1327,11 +1330,7 @@ class IntegrationsConfigHandler(web.RequestHandler):
         config.config_tree['integrations'].update(data)
         config.save_current_config()
         
-        # Restart sync threads if needed
-        if 'planning_center' in data:
-            planning_center.stop_sync_thread()
-            if config.config_tree['integrations']['planning_center'].get('tokens', {}).get('access_token'):
-                planning_center.start_sync_thread()
+        # No legacy Planning Center threads here; new scheduler runs separately
         
         if 'google_drive' in data:
             google_drive.stop_sync_thread()
@@ -1520,16 +1519,15 @@ def twisted():
     app.listen(config.web_port())
     ioloop.PeriodicCallback(SocketHandler.ws_dump, 50).start()
     
-    # Start Planning Center threads if credentials are available (env or config)
+    # Disable legacy Planning Center background threads; the new scheduler is used instead
     try:
         pco_client_id, pco_client_secret = planning_center.get_pco_credentials()
         if pco_client_id and pco_client_secret:
-            planning_center.start_sync_thread()
-            planning_center.start_schedule_cache_thread(days=8)
+            logging.info("Using new PCO scheduler; legacy Planning Center threads are disabled")
         else:
-            logging.info("PCO credentials not configured; skipping Planning Center threads")
+            logging.info("PCO credentials not configured; new scheduler will initialize when available")
     except Exception as e:
-        logging.error(f"Failed to start Planning Center threads: {e}")
+        logging.error(f"Planning Center credential check error: {e}")
     
     if config.config_tree.get('integrations', {}).get('google_drive', {}).get('tokens', {}).get('access_token'):
         google_drive.start_sync_thread()

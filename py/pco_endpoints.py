@@ -124,20 +124,24 @@ class PCORefreshScheduleHandler(RequestHandler):
             service_types = ['546904', '769651']  # CFC Sunday, CFC Wednesday
         
         scheduler.refresh_schedule(service_types)
-        
+
+        # Capture upcoming plans including slot_assignments for auditing
+        plans = scheduler.get_upcoming_plans()
+
         # Apply current slot assignments
         def update_slot(slot_num, person_name):
             slot = config.get_slot_by_number(slot_num)
             if slot:
                 slot['extended_name'] = person_name
                 config.update_slot(slot)
-        
+
         scheduler.apply_current_slot_assignments(update_slot)
-        
+
         self.write({
             "status": "success",
             "message": "Schedule refreshed",
-            "plan_count": len(scheduler.get_upcoming_plans())
+            "plan_count": len(plans),
+            "plans": plans
         })
 
 

@@ -179,8 +179,15 @@ export function initConsistentNavigation() {
     navigateToExtended();
   });
   
+  // Debounce to avoid double toggle from duplicate bindings or rapid clicks
+  let lastGroupEditClick = 0;
   $('#go-groupedit').on('click', (e) => {
     e.preventDefault();
+    const now = Date.now();
+    if (now - lastGroupEditClick < 900) {
+      return; // ignore double-fire within 300ms
+    }
+    lastGroupEditClick = now;
     groupEditToggle();
     $('.collapse').collapse('hide');
   });

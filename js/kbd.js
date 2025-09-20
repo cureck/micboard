@@ -18,12 +18,24 @@ function toggleFullScreen() {
 }
 
 export function keybindings() {
+  if (window.__MB_KBD_BOUND) {
+    return;
+  }
+  window.__MB_KBD_BOUND = true;
   $('#hud-button').click( function() {
     $('#hud').hide();
   });
 
 
+  let lastEAt = 0;
   document.addEventListener('keydown', (e) => {
+    // Ignore keystrokes while typing in inputs/textareas/selects or contentEditable
+    if (['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName) || e.target.isContentEditable) {
+      return;
+    }
+    if (e.repeat) {
+      return;
+    }
     if (e.key === 'Escape') {
       micboard.settingsMode = 'NONE';
       updateHash();
@@ -35,9 +47,7 @@ export function keybindings() {
     if ($('.editzone').is(':visible')) {
       return;
     }
-    if ($('.sidebar-nav').is(':visible')) {
-      return;
-    }
+    // Do not block keyboard shortcuts merely because the left nav is visible
 
     // Use consistent navigation for keyboard shortcuts
     if (e.key >= '0' && e.key <= '9') {
@@ -58,6 +68,11 @@ export function keybindings() {
 
     if (e.key === 'e') {
       if (micboard.group !== 0) {
+        const now = Date.now();
+        if (now - lastEAt < 900) {
+          return;
+        }
+        lastEAt = now;
         groupEditToggle();
       }
     }

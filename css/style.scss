@@ -997,13 +997,30 @@ a:link, a:visited, a:hover, a:active {
 }
 
 .sidebar-open #micboard {
-  padding-left: 308px;
+  padding-left: 0 !important; /* do not reserve space for legacy left sidebar */
 }
 
+/* Hide legacy left sidebar when using new right-hand editor */
 .sidebar-open .sidebar-nav {
-  display: block;
-  width: 300px;
-  transition: .5s;
+  display: none !important;
+  width: 0 !important;
+  transition: .0s;
+}
+
+/* Ensure right-hand group editor sidebar is visible when opened */
+.sidebar-open .sidebar {
+  display: block !important;
+  visibility: visible !important;
+  position: fixed;
+  right: 0;
+  top: 0;
+  height: 100vh;
+  z-index: 1050;
+}
+
+/* Make room for the right sidebar when open */
+.sidebar-open #micboard {
+  margin-right: 350px;
 }
 
 .slot-prototype-list .col-sm .info-drawer {

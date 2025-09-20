@@ -226,12 +226,7 @@ function mapGroups() {
       $('.collapse').collapse('hide');
     });
 
-    $('a#go-groupedit').click(() => {
-      if (micboard.group !== 0) {
-        groupEditToggle();
-        $('.collapse').collapse('hide');
-      }
-    });
+    // Removed legacy groupedit click binding to avoid duplicate toggles
 
     $('a.preset-link').each(function(index) {
       const id = parseInt($(this).attr('id')[9], 10);
@@ -397,7 +392,13 @@ $(document).ready(() => {
  */
 function applySlotAssignmentsToUI(namesBySlot) {
   
-  // First, clear all slot names
+  // Only proceed if extended editor inputs are present in the DOM
+  const anyExtInput = document.querySelector('.ext-name');
+  if (!anyExtInput) {
+    return; // Nothing to update in the current view
+  }
+  
+  // First, clear all slot names that exist
   for (let slotNum = 1; slotNum <= 6; slotNum++) {
     const slotElement = document.querySelector(`[data-slot="${slotNum}"] .ext-name`);
     if (slotElement) {
@@ -411,9 +412,7 @@ function applySlotAssignmentsToUI(namesBySlot) {
     const slotElement = document.querySelector(`[data-slot="${slotNumber}"] .ext-name`);
     if (slotElement) {
       slotElement.value = personName;
-      } else {
-        console.warn(`Slot element not found for slot ${slotNumber}`);
-      }
+    }
   });
   
   // Trigger a save to persist the changes

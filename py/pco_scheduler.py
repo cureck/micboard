@@ -35,9 +35,21 @@ class PCOScheduler:
         self._stop_event = threading.Event()
         self._scheduler_thread = None
         
+        # Throttle how often we recompute live status (seconds)
+        self._live_check_interval_seconds = 300  # 5 minutes
+        
         # Initialize session
         self._init_session()
     
+    def _normalize_position_name(self, name: str) -> str:
+        """Normalize position names for reliable matching (e.g., 'MIc 1' -> 'mic1')."""
+        if not name:
+            return ''
+        lowered = name.strip().lower()
+        # remove spaces, hyphens and underscores for robust matching
+        collapsed = ''.join(ch for ch in lowered if ch.isalnum())
+        return collapsed
+
     def _init_session(self):
         """Initialize PCO API session"""
         self.session = requests.Session()
@@ -175,22 +187,24 @@ class PCOScheduler:
             if person_ref and 'type' in person_ref and 'id' in person_ref:
                 person_key = f"{person_ref['type']}-{person_ref['id']}"
                 person_data = included.get(person_key, {})
-                person_name = person_data.get('attributes', {}).get('name', '')
+                person_name = person_data.get('attributes', {}).get('name', '') or person_data.get('attributes', {}).get('full_name', '')
             else:
                 person_name = ''
-            
-            # Get individual position name (not team position name)
-            position_ref = item.get('relationships', {}).get('team_position', {}).get('data', {})
-            if position_ref and 'type' in position_ref and 'id' in position_ref:
-                position_key = f"{position_ref['type']}-{position_ref['id']}"
-                position_data = included.get(position_key, {})
-                position_name = position_data.get('attributes', {}).get('name', '')
-            else:
-                position_name = ''
-            
+
+            # Prefer PlanPerson.attributes.team_position_name when present
+            position_name = item.get('attributes', {}).get('team_position_name', '') or ''
+
+            # Fallback to included TeamPosition.attributes.name
+            if not position_name:
+                position_ref = item.get('relationships', {}).get('team_position', {}).get('data', {})
+                if position_ref and 'type' in position_ref and 'id' in position_ref:
+                    position_key = f"{position_ref['type']}-{position_ref['id']}"
+                    position_data = included.get(position_key, {})
+                    position_name = position_data.get('attributes', {}).get('name', '')
+
             # Get status
             status = item.get('attributes', {}).get('status', 'C')
-            
+
             assignments.append({
                 'person_name': person_name,
                 'position_name': position_name,
@@ -198,6 +212,9 @@ class PCOScheduler:
             })
         
         logging.info(f"Found {len(assignments)} team members for plan {plan_id}")
+        # Log a sample of first few to verify mapping at runtime
+        for sample in assignments[:8]:
+            logging.info(f"Assignment sample: person='{sample.get('person_name')}', position='{sample.get('position_name')}', status='{sample.get('status')}'")
         return assignments
     
     def _map_assignments_to_slots(self, assignments: List[Dict], service_type_id: str = None) -> Dict[int, str]:
@@ -260,8 +277,9 @@ class PCOScheduler:
                 position_name = rule.get('position_name')
                 slot_number = rule.get('slot')
                 if position_name and slot_number:
-                    mappings[position_name] = slot_number
-                    logging.info(f"_get_configured_mappings: Added mapping {position_name} -> slot {slot_number}")
+                    normalized_name = self._normalize_position_name(position_name)
+                    mappings[normalized_name] = slot_number
+                    logging.info(f"_get_configured_mappings: Added mapping {position_name} (norm='{normalized_name}') -> slot {slot_number}")
             
             # Get mappings from teams/positions (ID-based, but we need to map by name)
             # This is more complex as we need to fetch position names from PCO API
@@ -275,8 +293,9 @@ class PCOScheduler:
                     position_name = rule.get('position_name')
                     slot_number = rule.get('slot')
                     if position_name and slot_number:
-                        mappings[position_name] = slot_number
-                        logging.info(f"_get_configured_mappings: Added fallback mapping {position_name} -> slot {slot_number}")
+                        normalized_name = self._normalize_position_name(position_name)
+                        mappings[normalized_name] = slot_number
+                        logging.info(f"_get_configured_mappings: Added fallback mapping {position_name} (norm='{normalized_name}') -> slot {slot_number}")
         
         # If still no mappings found, fall back to global mappings
         if not mappings:
@@ -291,31 +310,22 @@ class PCOScheduler:
         Get slot number for a position name
         Checks configured mappings and fallback patterns
         """
-        # Use provided mappings or fall back to instance mappings
-        mappings = configured_mappings or self.slot_mappings
-        
+        # Normalize inputs and use normalized mapping keys
+        normalized = self._normalize_position_name(position_name)
+        mappings = configured_mappings or {self._normalize_position_name(k): v for k, v in self.slot_mappings.items()}
+
         # First check configured mappings
-        if position_name in mappings:
-            return mappings[position_name]
-        
-        # Check for "Mic N" pattern
-        if position_name.startswith('Mic '):
-            try:
-                mic_number = int(position_name.split(' ')[1])
-                if 1 <= mic_number <= 6:
+        if normalized in mappings:
+            return mappings[normalized]
+
+        # Check for generic "micN" pattern
+        if normalized.startswith('mic'):
+            num_str = normalized[3:]
+            if num_str.isdigit():
+                mic_number = int(num_str)
+                if 1 <= mic_number <= 32:
                     return mic_number
-            except (ValueError, IndexError):
-                pass
-        
-        # Check for exact matches
-        mic_positions = {
-            'Mic 1': 1, 'Mic 2': 2, 'Mic 3': 3,
-            'Mic 4': 4, 'Mic 5': 5, 'Mic 6': 6
-        }
-        
-        if position_name in mic_positions:
-            return mic_positions[position_name]
-        
+
         return None
 
     def _get_slot_for_position_with_service_type(self, position_name: str, service_type_id: str, configured_mappings: Dict[str, int] = None) -> Optional[int]:
@@ -327,6 +337,7 @@ class PCOScheduler:
         # First try to find a mapping that matches both position name and service type
         pco_config = config.config_tree.get('integrations', {}).get('planning_center', {})
         service_types = pco_config.get('service_types', [])
+        normalized_incoming = self._normalize_position_name(position_name)
         
         for st in service_types:
             if st.get('id') != service_type_id:
@@ -334,7 +345,8 @@ class PCOScheduler:
             
             # Check reuse rules for this service type
             for rule in st.get('reuse_rules', []):
-                if rule.get('position_name') == position_name:
+                rule_name = rule.get('position_name')
+                if self._normalize_position_name(rule_name) == normalized_incoming:
                     slot_number = rule.get('slot')
                     if slot_number:
                         logging.info(f"Found service-type-specific mapping: {position_name} -> slot {slot_number} for service type {service_type_id}")
@@ -343,7 +355,7 @@ class PCOScheduler:
             # Check teams/positions for this service type
             for team in st.get('teams', []):
                 for position in team.get('positions', []):
-                    if position.get('name') == position_name:
+                    if self._normalize_position_name(position.get('name')) == normalized_incoming:
                         slot_number = position.get('slot')
                         if slot_number:
                             logging.info(f"Found team/position mapping: {position_name} -> slot {slot_number} for service type {service_type_id}")
@@ -524,6 +536,7 @@ class PCOScheduler:
         self.refresh_schedule(service_types)
         
         last_refresh_date = datetime.now().date()
+        seconds_since_last_live_check = 0
         
         while not self._stop_event.is_set():
             # Check if we need to refresh at midnight
@@ -535,15 +548,18 @@ class PCOScheduler:
                 self.refresh_schedule(service_types)
                 last_refresh_date = current_date
             
-            # Update live status every minute
-            with self._lock:
-                self._update_live_status()
+            # Update live status on the configured interval
+            if seconds_since_last_live_check >= self._live_check_interval_seconds:
+                with self._lock:
+                    self._update_live_status()
+                seconds_since_last_live_check = 0
             
-            # Sleep for 60 seconds, checking for stop every 5 seconds
+            # Sleep for 60 seconds total in 5-second increments to allow prompt shutdown
             for _ in range(12):
                 if self._stop_event.is_set():
                     break
                 time.sleep(5)
+                seconds_since_last_live_check += 5
         
         logging.info("Scheduler worker stopped")
 
