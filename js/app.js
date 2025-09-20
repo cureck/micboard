@@ -150,10 +150,9 @@ export function updateLiveServiceIndicator() {
             applySlotAssignmentsToUI(slotAssignments);
           }
           
-          // Force refresh the schedule cache when we detect a live service
-          // This ensures the plan_of_day data is up to date
-          fetch('/api/pco/force-refresh-schedule', { method: 'POST' })
-            .catch(err => console.error('Failed to refresh schedule cache:', err));
+          // Ensure plan data is fresh using the new scheduler endpoint
+          fetch('/api/pco/refresh-schedule', { method: 'POST' })
+            .catch(err => console.error('Failed to refresh schedule via scheduler:', err));
         } else {
           // Check if this is a manually selected plan (even if not in live window)
           const isManualPlan = pod.plan_id && (now < liveStart);

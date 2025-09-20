@@ -3,6 +3,7 @@
 import { micboard, updateHash } from './app.js';
 import { renderGroup } from './channelview.js';
 import { JsonUpdate } from './data.js';
+import { destroyAllCharts } from './chart-smoothie.js';
 import { groupEditToggle } from './dnd.js';
 
 /**
@@ -23,12 +24,25 @@ export function navigateToMain(groupId = 0, forceRefresh = false) {
   micboard.group = groupId;
   updateHash();
   
+  // Stop any integrations timers (PCO schedule) to avoid background refresh
+  try {
+    if (window.pcoSchedule && typeof window.pcoSchedule.destroy === 'function') {
+      window.pcoSchedule.destroy();
+      window.pcoSchedule = null;
+    }
+  } catch (e) {
+    // no-op
+  }
+  
   // Hide all other views
   $('.integrations-page').hide();
   $('.settings').hide();
   $('.message-board').hide();
   $('.sidebar-nav').show();
   $('#micboard').show();
+  
+  // Ensure charts are clean prior to render updates
+  destroyAllCharts();
   
   if (forceRefresh) {
     // Force refresh data and then render

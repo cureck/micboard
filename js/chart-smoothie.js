@@ -107,3 +107,33 @@ export function initChart(slotSelector, data) {
   chart.slotChart.streamTo(slotCanvas, 100);
   return chart;
 }
+
+// Gracefully stop and remove all live charts to prevent RAF/timer leaks
+export function destroyAllCharts() {
+  Object.keys(charts).forEach((slot) => {
+    try {
+      if (charts[slot] && charts[slot].slotChart && typeof charts[slot].slotChart.stop === 'function') {
+        charts[slot].slotChart.stop();
+      }
+    } catch (e) {
+      // no-op
+    } finally {
+      delete charts[slot];
+    }
+  });
+}
+
+// Stop and remove a specific chart by slot id
+export function destroyChartBySlot(slotId) {
+  const slot = String(slotId);
+  if (!charts[slot]) return;
+  try {
+    if (charts[slot].slotChart && typeof charts[slot].slotChart.stop === 'function') {
+      charts[slot].slotChart.stop();
+    }
+  } catch (e) {
+    // no-op
+  } finally {
+    delete charts[slot];
+  }
+}

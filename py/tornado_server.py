@@ -778,22 +778,6 @@ class PCORefreshStructureHandler(web.RequestHandler):
             self.write(json.dumps({'error': str(e)}))
 
 
-class PCOForceRefreshScheduleHandler(web.RequestHandler):
-    """Handler for forcing a refresh of the PCO schedule cache."""
-    def post(self):
-        try:
-            logging.info("PCO force refresh schedule triggered")
-            import planning_center
-            
-            # Force refresh the schedule cache
-            planning_center.force_refresh_schedule_cache()
-            
-            self.write(json.dumps({'status': 'success', 'message': 'Schedule cache refreshed'}))
-        except Exception as e:
-            logging.error(f"PCO force refresh schedule error: {e}")
-            self.set_status(500)
-            self.write(json.dumps({'status': 'error', 'message': str(e)}))
-
 
 class PCOCacheStatusHandler(web.RequestHandler):
     """Handler for checking PCO schedule cache status."""
@@ -1488,7 +1472,7 @@ def twisted():
         (r'/api/pco/sync', PCOSyncHandler),
         (r'/api/pco/reset', PCOResetHandler),
         (r'/api/pco/refresh-structure', PCORefreshStructureHandler),
-        (r'/api/pco/force-refresh-schedule', PCOForceRefreshScheduleHandler),
+        # Legacy force-refresh endpoint removed; use /api/pco/refresh-schedule instead
         (r'/api/pco/cache-status', PCOCacheStatusHandler),
         (r'/api/pco/health', PCOHealthCheckHandler),
         (r'/api/pco/set-manual-plan', pco_endpoints.PCOSetManualPlanHandler),

@@ -9,6 +9,16 @@ let integrationsConfig = {};
 let serviceTypes = [];
 let allTeams = {};
 let allPositions = {};
+let integrationsHandlersBound = false;
+
+function oauthMessageHandler(event) {
+  if (event && event.data && event.data.type === 'pco_auth_success') {
+    loadIntegrationsConfig();
+  } else if (event && event.data && event.data.type === 'drive_auth_success') {
+    loadIntegrationsConfig();
+    loadDriveFolders();
+  }
+}
 
 export function initIntegrationsUI() {
   if (micboard.settingsMode === 'INTEGRATIONS') {
@@ -36,7 +46,7 @@ export function initIntegrationsUI() {
   // Load current integrations config
   loadIntegrationsConfig();
 
-  // Set up event handlers
+  // Set up event handlers (idempotent)
   setupEventHandlers();
   
   // Show loading message for schedule
@@ -69,8 +79,8 @@ export function initIntegrationsUI() {
         .then(data => {
           console.log('PCO health check:', data);
           
-          // Now try to refresh the schedule cache
-          return fetch('/api/pco/force-refresh-schedule', { method: 'POST' });
+          // Now refresh the schedule via the new scheduler endpoint
+          return fetch('/api/pco/refresh-schedule', { method: 'POST' });
         })
         .then(response => {
           if (!response.ok) {
@@ -303,6 +313,11 @@ async function buildPCOStructure(serviceTypeIds) {
 }
 
 function setupEventHandlers() {
+  // Prevent duplicate bindings
+  if (integrationsHandlersBound) {
+    return;
+  }
+
   // Check if elements exist before adding handlers
   const pcoAuthorize = document.getElementById('pco-authorize');
   const driveAuthorize = document.getElementById('drive-authorize');
@@ -312,7 +327,7 @@ function setupEventHandlers() {
   }
 
   // Back button - use consistent navigation
-  $('#integrations-back').on('click', function() {
+  $('#integrations-back').off('click').on('click', function() {
     import('./navigation.js').then(nav => {
       nav.navigateBack();
     }).catch(error => {
@@ -331,10 +346,10 @@ function setupEventHandlers() {
   loadOAuthCredentials();
 
   // Save OAuth credentials
-  $('#save-oauth-credentials').on('click', saveOAuthCredentials);
+  $('#save-oauth-credentials').off('click').on('click', saveOAuthCredentials);
 
   // PCO Authorization
-  $('#pco-authorize').on('click', function() {
+  $('#pco-authorize').off('click').on('click', function() {
     // Use fetch instead of opening a new window
     fetch('/api/pco/authorize')
       .then(response => {
@@ -361,7 +376,7 @@ function setupEventHandlers() {
   });
 
   // PCO Manual Sync
-  $('#pco-sync-now').on('click', function() {
+  $('#pco-sync-now').off('click').on('click', function() {
     $('#pco-sync-status').html('<span class="text-warning">Syncing...</span>');
     
     fetch('/api/pco/sync', { method: 'POST' })
@@ -380,7 +395,7 @@ function setupEventHandlers() {
   });
 
   // PCO Reset Sync State
-  $('#pco-reset-sync').on('click', function() {
+  $('#pco-reset-sync').off('click').on('click', function() {
     $('#pco-reset-status').html('<span class="text-warning">Resetting...</span>');
     
     fetch('/api/pco/reset', { method: 'POST' })
@@ -399,7 +414,7 @@ function setupEventHandlers() {
   });
 
   // PCO Refresh Structure
-  $('#pco-refresh-structure').on('click', async function() {
+  $('#pco-refresh-structure').off('click').on('click', async function() {
     const button = $(this);
     const statusSpan = $('#pco-refresh-status');
     
@@ -434,18 +449,18 @@ function setupEventHandlers() {
   });
   
   // Drive Authorization
-  $('#drive-authorize').on('click', function() {
+  $('#drive-authorize').off('click').on('click', function() {
     window.open('/api/drive/authorize', 'drive_auth', 'width=600,height=800');
   });
   
   // Drive folder refresh
-  $('#drive-refresh-folders').on('click', loadDriveFolders);
+  $('#drive-refresh-folders').off('click').on('click', loadDriveFolders);
   
   // Drive file status refresh
-  $('#drive-refresh-status').on('click', loadDriveFileStatus);
+  $('#drive-refresh-status').off('click').on('click', loadDriveFileStatus);
   
   // Drive folder selection change
-  $('#drive-folder-select').on('change', function() {
+  $('#drive-folder-select').off('change').on('change', function() {
     const folderId = $(this).val();
     if (folderId) {
       loadDriveFileStatus();
@@ -455,7 +470,7 @@ function setupEventHandlers() {
   });
   
   // Service type selection change
-  $('#pco-service-types').on('change', function() {
+  $('#pco-service-types').off('change').on('change', function() {
     const selectedIds = $(this).val() || [];
     if (selectedIds.length > 0) {
       loadTeamsAndPositions(selectedIds);
@@ -463,26 +478,29 @@ function setupEventHandlers() {
   });
   
   // Save PCO settings
-  $('#pco-save').on('click', savePCOSettings);
+  $('#pco-save').off('click').on('click', savePCOSettings);
   
   // Save Drive settings
-  $('#drive-save').on('click', saveDriveSettings);
+  $('#drive-save').off('click').on('click', saveDriveSettings);
   
   // Listen for OAuth success messages
+  window.removeEventListener('message', oauthMessageHandler);
+  window.addEventListener('message', oauthMessageHandler);
+
   // PCO Daily Schedule refresh
-  $('#pco-refresh-schedule').on('click', function() {
+  $('#pco-refresh-schedule').off('click').on('click', function() {
     loadDailySchedule();
   });
   
-  // PCO Force Schedule Cache Refresh
-  $('#pco-force-refresh-schedule').on('click', function() {
+  // PCO Force Schedule Refresh (new scheduler endpoint)
+  $('#pco-force-refresh-schedule').off('click').on('click', function() {
     const button = $(this);
     const statusSpan = $('#pco-schedule-status');
     
     button.prop('disabled', true);
-    statusSpan.html('<span class="text-warning">Force refreshing schedule cache...</span>');
+    statusSpan.html('<span class="text-warning">Refreshing schedule...</span>');
     
-    fetch('/api/pco/force-refresh-schedule', { method: 'POST' })
+    fetch('/api/pco/refresh-schedule', { method: 'POST' })
       .then(response => {
         if (!response.ok) {
           throw new Error(`HTTP ${response.status}: ${response.statusText}`);
@@ -491,7 +509,7 @@ function setupEventHandlers() {
       })
       .then(data => {
         if (data.status === 'success') {
-          statusSpan.html('<span class="text-success">Cache refreshed, loading schedule...</span>');
+          statusSpan.html('<span class="text-success">Schedule refreshed, loading...</span>');
           // Wait a moment for the cache to update, then load the schedule
           setTimeout(() => {
             loadDailySchedule();
@@ -510,7 +528,7 @@ function setupEventHandlers() {
   });
   
   // PCO Check Schedule Cache Status
-  $('#pco-check-cache').on('click', function() {
+  $('#pco-check-cache').off('click').on('click', function() {
     const button = $(this);
     const statusSpan = $('#pco-schedule-status');
     
@@ -538,14 +556,7 @@ function setupEventHandlers() {
       });
   });
   
-  window.addEventListener('message', function(event) {
-    if (event.data.type === 'pco_auth_success') {
-      loadIntegrationsConfig();
-    } else if (event.data.type === 'drive_auth_success') {
-      loadIntegrationsConfig();
-      loadDriveFolders(); // Load folders after successful auth
-    }
-  });
+  integrationsHandlersBound = true;
 }
 
 function savePCOSettings() {
@@ -1342,6 +1353,7 @@ window.forceRefreshSchedule = function() {
     if (data.status === 'success') {
       showNotification(`Schedule refreshed: ${data.plan_count} plans loaded`, 'success');
       loadDailySchedule(); // Reload the display
+      try { import('./app.js').then(m => m.updateLiveServiceIndicator && m.updateLiveServiceIndicator()); } catch (e) {}
     } else {
       showNotification('Failed to refresh schedule', 'error');
     }
@@ -1366,6 +1378,7 @@ window.clearManualPlan = function() {
     if (data.status === 'success') {
       showNotification('Manual plan cleared', 'success');
       loadDailySchedule(); // Reload the display
+      try { import('./app.js').then(m => m.updateLiveServiceIndicator && m.updateLiveServiceIndicator()); } catch (e) {}
     }
   })
   .catch(error => {
@@ -1428,7 +1441,10 @@ window.setManualPlan = function(planId) {
       // Refresh the schedule to show updated status
       setTimeout(() => {
         loadDailySchedule();
+        try { import('./app.js').then(m => m.updateLiveServiceIndicator && m.updateLiveServiceIndicator()); } catch (e) {}
       }, 1000);
+      // Immediately update the live service indicator as well
+      try { import('./app.js').then(m => m.updateLiveServiceIndicator && m.updateLiveServiceIndicator()); } catch (e) {}
     } else {
       console.error('Failed to set manual plan:', data.message);
       showNotification(`Failed to set manual plan: ${data.message}`, 'error');

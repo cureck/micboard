@@ -2,7 +2,7 @@
 
 import { micboard, ActivateMessageBoard, updateHash } from './app.js';
 import { updateBackground } from './gif.js';
-import { initChart, charts } from './chart-smoothie.js';
+import { initChart, charts, destroyAllCharts } from './chart-smoothie.js';
 import { seedTransmitters, autoRandom } from './demodata.js';
 import { updateEditor } from './dnd.js';
 
@@ -262,6 +262,8 @@ export function updateSlot(data) {
 export function renderDisplayList(dl) {
   console.log('DL :');
   console.log(dl);
+  // Stop and clear any existing charts before re-rendering DOM to avoid leaks
+  destroyAllCharts();
   document.getElementById('micboard').innerHTML = '';
 
   if (micboard.url.demo) {
