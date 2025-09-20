@@ -182,6 +182,12 @@ def init_pco_scheduler():
         client_id = oauth_creds.get('pco_client_id')
         client_secret = oauth_creds.get('pco_client_secret')
         
+        # Fallback: use integrations.planning_center if oauth creds are not set yet
+        if not client_id or not client_secret:
+            pc_cfg = config.config_tree.get('integrations', {}).get('planning_center', {})
+            client_id = client_id or pc_cfg.get('client_id')
+            client_secret = client_secret or pc_cfg.get('client_secret')
+        
         # Debug logging
         logging.info(f"OAuth credentials found: {bool(oauth_creds)}")
         logging.info(f"Client ID present: {bool(client_id)}")
@@ -220,6 +226,12 @@ def init_pco_scheduler():
         
         # Start the scheduler
         scheduler.start_scheduler(service_types)
+        
+        # Force an immediate refresh so plan-of-day is built right away
+        try:
+            scheduler.refresh_schedule(service_types)
+        except Exception as e:
+            logging.error(f"Error refreshing schedule after scheduler init: {e}")
         
         logging.info("PCO scheduler initialized and started")
         return True

@@ -279,6 +279,16 @@ class PCOAuthHandler(web.RequestHandler):
             # Initialize the new scheduler with updated credentials instead of legacy threads
             try:
                 pco_endpoints.init_pco_scheduler()
+                # After initialization, force a refresh so plan-of-day is current immediately
+                import pco_scheduler
+                scheduler = pco_scheduler.get_scheduler()
+                if scheduler:
+                    # Use configured service types
+                    pco_config = config.config_tree.get('integrations', {}).get('planning_center', {})
+                    service_types = [st['id'] for st in pco_config.get('service_types', [])]
+                    if not service_types:
+                        service_types = ['546904', '769651']
+                    scheduler.refresh_schedule(service_types)
             except Exception as e:
                 logging.error(f"Failed to initialize new PCO scheduler after auth: {e}")
             
@@ -766,6 +776,18 @@ class PCORefreshStructureHandler(web.RequestHandler):
             config.save_config()
             
             logging.info("PCO structure refresh completed successfully")
+            # After structure refresh, trigger scheduler refresh so plan-of-day rebuilds
+            try:
+                import pco_scheduler
+                scheduler = pco_scheduler.get_scheduler()
+                if scheduler:
+                    service_types = [st['id'] for st in pco_config.get('service_types', [])]
+                    if not service_types:
+                        service_types = ['546904', '769651']
+                    scheduler.refresh_schedule(service_types)
+            except Exception as e:
+                logging.error(f"Scheduler refresh after structure update failed: {e}")
+
             self.write(json.dumps({
                 'status': 'success', 
                 'message': 'PCO structure refreshed successfully',
