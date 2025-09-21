@@ -497,7 +497,15 @@ class PCOScheduler:
             logging.info("No current plan to apply slot assignments")
             return
         
-        slot_assignments = current_plan.get('slot_assignments', {})
+        slot_assignments = current_plan.get('slot_assignments', {}).copy()
+        # Merge in any manual overrides for this plan so they persist
+        try:
+            import pco_endpoints
+            ov = pco_endpoints.get_slot_overrides(current_plan.get('plan_id')) if current_plan else {}
+            if ov:
+                slot_assignments.update(ov)
+        except Exception as _e:
+            logging.error(f"apply_current_slot_assignments: override merge failed: {_e}")
         
         # First, clear all slot names
         for slot_num in range(1, 7):

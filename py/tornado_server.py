@@ -112,6 +112,28 @@ class JsonHandler(web.RequestHandler):
                 for plan in plan_of_day:
                     logging.info(f"JsonHandler: Plan {plan.get('plan_id')} - Service Type: {plan.get('service_type_id')}, Title: {plan.get('title')}, Slot assignments: {plan.get('slot_assignments', {})}")
             payload['plan_of_day'] = plan_of_day
+
+            # Additionally, reflect the active plan's assignments into config.slots[].extended_name
+            try:
+                active_plan = current_plan
+                # Fallback: if not set above, recompute
+                if 'active_plan' not in locals():
+                    try:
+                        active_plan = scheduler.get_current_plan() if scheduler else None
+                    except Exception:
+                        active_plan = None
+                if active_plan and payload.get('config') and payload['config'].get('slots'):
+                    # Prefer slot_assignments; fallback to names_by_slot if present
+                    assignments = active_plan.get('slot_assignments') or active_plan.get('names_by_slot') or {}
+                    for slot_obj in payload['config']['slots']:
+                        try:
+                            s = int(slot_obj.get('slot'))
+                        except Exception:
+                            continue
+                        if s in assignments and assignments[s]:
+                            slot_obj['extended_name'] = assignments[s]
+            except Exception as _e:
+                logging.error(f"Failed to reflect active plan assignments into config slots: {_e}")
             self.write(json.dumps(payload, sort_keys=True, indent=4))
         except Exception as e:
             logging.error(f"JsonHandler: Error getting plan_of_day: {e}")

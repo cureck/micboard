@@ -48,23 +48,12 @@ class ChannelDevice:
         else:
             chan_name = self.chan_name_raw
 
-        if 'chan_name_raw' in self.cfg:
-            if self.cfg['chan_name_raw'] == self.chan_name_raw:
-                if 'extended_id' in self.cfg:
-                    if self.cfg['extended_id']:
-                        chan_id = self.cfg['extended_id']
-
-                if 'extended_name' in self.cfg:
-                    if self.cfg['extended_name']:
-                        chan_name = self.cfg['extended_name']
-
-            elif 'SLOT' not in self.chan_name_raw:
-                if 'extended_id' in self.cfg:
-                    self.cfg.pop('extended_id')
-                if 'extended_name' in self.cfg:
-                    self.cfg.pop('extended_name')
-                self.cfg.pop('chan_name_raw')
-                config.save_current_config()
+        # Prefer extended overrides whenever present. Do not gate on chan_name_raw equality,
+        # so manual/override names remain visible even if device-reported raw name changes.
+        if 'extended_id' in self.cfg and self.cfg['extended_id']:
+            chan_id = self.cfg['extended_id']
+        if 'extended_name' in self.cfg and self.cfg['extended_name']:
+            chan_name = self.cfg['extended_name']
 
         return (chan_id, chan_name)
 
