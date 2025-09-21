@@ -1077,17 +1077,33 @@ function renderPlanActions(plan, status, currentPlanId) {
       <button class="btn btn-sm btn-danger" onclick="clearManualPlan()">
         Clear Manual
       </button>
+      <button class="btn btn-sm btn-outline-light ms-2" onclick="openOverridesEditor('${plan.plan_id}', ${JSON.stringify(plan.slot_assignments || {})})">
+        Overrides
+      </button>
     `;
   } else if (status === 'live' && !plan.is_manual) {
-    return '<span class="text-success">Currently Live</span>';
+    return `
+      <span class="text-success">Currently Live</span>
+      <button class="btn btn-sm btn-outline-light ms-2" onclick="openOverridesEditor('${plan.plan_id}', ${JSON.stringify(plan.slot_assignments || {})})">
+        Overrides
+      </button>
+    `;
   } else if (!hasLivePlan && status !== 'live') {
     return `
       <button class="btn btn-sm btn-success" onclick="setManualPlan('${plan.plan_id}')">
         Set Live
       </button>
+      <button class="btn btn-sm btn-outline-light ms-2" onclick="openOverridesEditor('${plan.plan_id}', ${JSON.stringify(plan.slot_assignments || {})})">
+        Overrides
+      </button>
     `;
   } else {
-    return '<span class="text-muted">Cannot set during live service</span>';
+    return `
+      <span class="text-muted">Cannot set during live service</span>
+      <button class="btn btn-sm btn-outline-light ms-2" onclick="openOverridesEditor('${plan.plan_id}', ${JSON.stringify(plan.slot_assignments || {})})">
+        Overrides
+      </button>
+    `;
   }
 }
 
@@ -1476,6 +1492,104 @@ window.setManualPlan = function(planId) {
       button.disabled = false;
     }
   });
+}
+
+// Simple overrides editor modal
+function ensureOverridesModal() {
+  if (document.getElementById('slot-overrides-modal')) return;
+  const modal = document.createElement('div');
+  modal.id = 'slot-overrides-modal';
+  modal.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background: rgba(0,0,0,0.6);z-index:10000;display:none;align-items:center;justify-content:center;';
+  modal.innerHTML = `
+    <div style="background:#1f1f1f;color:#fff;padding:16px;border-radius:8px;min-width:320px;max-width:420px;box-shadow:0 10px 30px rgba(0,0,0,0.5)">
+      <h5 class="mb-3">Slot Overrides</h5>
+      <div id="slot-overrides-form"></div>
+      <div class="d-flex justify-content-between mt-3">
+        <button id="slot-overrides-clear" class="btn btn-outline-warning">Clear All</button>
+        <div>
+          <button id="slot-overrides-cancel" class="btn btn-secondary me-2">Cancel</button>
+          <button id="slot-overrides-save" class="btn btn-primary">Save</button>
+        </div>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+  modal.addEventListener('click', (e) => { if (e.target === modal) closeOverridesModal(); });
+}
+
+function closeOverridesModal() {
+  const modal = document.getElementById('slot-overrides-modal');
+  if (modal) modal.style.display = 'none';
+}
+
+async function loadExistingOverrides(planId) {
+  try {
+    const r = await fetch(`/api/pco/slot-overrides?plan_id=${encodeURIComponent(planId)}`);
+    if (!r.ok) return {};
+    const j = await r.json();
+    return j.overrides || {};
+  } catch (_) { return {}; }
+}
+
+window.openOverridesEditor = async function(planId, slotAssignments) {
+  ensureOverridesModal();
+  const modal = document.getElementById('slot-overrides-modal');
+  const form = document.getElementById('slot-overrides-form');
+  const existing = await loadExistingOverrides(planId);
+  const merged = Object.assign({}, slotAssignments || {}, existing || {});
+
+  // Build fields for Slot 1..6, prefill from merged
+  let html = '';
+  for (let i = 1; i <= 6; i++) {
+    const val = merged[i] || '';
+    html += `
+      <div class="mb-2 d-flex align-items-center">
+        <label style="width:80px" class="me-2">Slot ${i}:</label>
+        <input type="text" class="form-control form-control-sm" data-slot-input="${i}" value="${val.replace(/"/g,'&quot;')}">
+      </div>`;
+  }
+  form.innerHTML = html;
+
+  // Wire buttons
+  document.getElementById('slot-overrides-cancel').onclick = closeOverridesModal;
+  document.getElementById('slot-overrides-clear').onclick = async () => {
+    try {
+      await fetch('/api/pco/slot-overrides', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ plan_id: planId })
+      });
+      showNotification('Overrides cleared', 'success');
+      closeOverridesModal();
+      loadDailySchedule();
+    } catch (e) {
+      showNotification('Error clearing overrides', 'error');
+    }
+  };
+  document.getElementById('slot-overrides-save').onclick = async () => {
+    const inputs = document.querySelectorAll('[data-slot-input]');
+    const overrides = {};
+    inputs.forEach(inp => {
+      const slotNum = parseInt(inp.getAttribute('data-slot-input'));
+      const name = (inp.value || '').trim();
+      overrides[slotNum] = name; // server will normalize and drop empties
+    });
+    try {
+      const r = await fetch('/api/pco/slot-overrides', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ plan_id: planId, overrides })
+      });
+      if (!r.ok) throw new Error('Save failed');
+      showNotification('Overrides saved', 'success');
+      closeOverridesModal();
+      loadDailySchedule();
+      try { import('./app.js').then(m => m.updateLiveServiceIndicator && m.updateLiveServiceIndicator()); } catch (e) {}
+    } catch (e) {
+      showNotification('Error saving overrides', 'error');
+    }
+  };
+
+  modal.style.display = 'flex';
 }
 
 // Duplicate clearManualPlan and showNotification removed - using the ones defined earlier

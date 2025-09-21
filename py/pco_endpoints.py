@@ -10,6 +10,61 @@ from datetime import datetime
 import pco_scheduler
 import config
 
+# In-memory slot overrides store: { plan_id: { slot_number: name } }
+# NOTE: This is ephemeral and will be cleared on server restart.
+_slot_overrides: Dict[str, Dict[int, str]] = {}
+
+def _normalize_overrides(overrides: Dict) -> Dict[int, str]:
+    out: Dict[int, str] = {}
+    if not isinstance(overrides, dict):
+        return out
+    for k, v in overrides.items():
+        try:
+            slot_num = int(k)
+        except Exception:
+            try:
+                slot_num = int(str(k))
+            except Exception:
+                continue
+        if isinstance(v, str):
+            v_clean = v.strip()
+        else:
+            v_clean = '' if v is None else str(v)
+        if v_clean:
+            out[slot_num] = v_clean
+    return out
+
+def set_slot_overrides(plan_id: str, overrides: Dict[int, str]) -> None:
+    existing = dict(_slot_overrides.get(plan_id, {}))
+    for k, v in overrides.items():
+        if v is None or (isinstance(v, str) and v.strip() == ''):
+            if k in existing:
+                existing.pop(k)
+        else:
+            existing[k] = v
+    if existing:
+        _slot_overrides[plan_id] = existing
+    else:
+        _slot_overrides.pop(plan_id, None)
+
+def get_slot_overrides(plan_id: str) -> Dict[int, str]:
+    return dict(_slot_overrides.get(plan_id, {}))
+
+def clear_slot_overrides(plan_id: str, slots: list = None) -> None:
+    if plan_id not in _slot_overrides:
+        return
+    if not slots:
+        _slot_overrides.pop(plan_id, None)
+        return
+    for s in slots:
+        try:
+            s_int = int(s)
+            _slot_overrides[plan_id].pop(s_int, None)
+        except Exception:
+            continue
+    if not _slot_overrides[plan_id]:
+        _slot_overrides.pop(plan_id, None)
+
 class PCOUpcomingPlansHandler(RequestHandler):
     """Get list of all upcoming plans"""
     
@@ -28,6 +83,15 @@ class PCOUpcomingPlansHandler(RequestHandler):
             plan['is_live'] = (current_plan and plan['plan_id'] == current_plan['plan_id'])
             plan['is_manual'] = (scheduler.manual_override_plan and 
                                 plan['plan_id'] == scheduler.manual_override_plan['plan_id'])
+            # Merge manual slot overrides if present
+            try:
+                ov = get_slot_overrides(plan['plan_id'])
+                if ov:
+                    sa = plan.get('slot_assignments') or {}
+                    sa.update(ov)
+                    plan['slot_assignments'] = sa
+            except Exception:
+                pass
         
         self.write({
             "status": "success",
@@ -158,6 +222,15 @@ class PCOCurrentPlanHandler(RequestHandler):
         current_plan = scheduler.get_current_plan()
         
         if current_plan:
+            # Merge overrides before returning
+            try:
+                ov = get_slot_overrides(current_plan['plan_id'])
+                if ov:
+                    sa = current_plan.get('slot_assignments') or {}
+                    sa.update(ov)
+                    current_plan['slot_assignments'] = sa
+            except Exception:
+                pass
             self.write({
                 "status": "success",
                 "plan": current_plan,
@@ -365,3 +438,117 @@ class PCOClearManualPlanHandler(RequestHandler):
                 'status': 'error',
                 'error': str(e)
             }))
+
+
+class PCOSlotOverridesHandler(RequestHandler):
+    """Get/set/clear manual slot overrides for a plan"""
+    def get(self):
+        try:
+            plan_id = self.get_argument('plan_id', '')
+            if not plan_id:
+                self.set_status(400)
+                self.write({"error": "plan_id required"})
+                return
+            self.write({"plan_id": plan_id, "overrides": get_slot_overrides(plan_id)})
+        except Exception as e:
+            self.set_status(500)
+            self.write({"error": str(e)})
+
+    def post(self):
+        try:
+            data = json.loads(self.request.body or b'{}')
+            plan_id = data.get('plan_id')
+            overrides_raw = data.get('overrides', {})
+            if not plan_id or not isinstance(overrides_raw, dict):
+                self.set_status(400)
+                self.write({"error": "plan_id and overrides dict required"})
+                return
+            overrides = _normalize_overrides(overrides_raw)
+            set_slot_overrides(plan_id, overrides)
+            # If this plan is currently active, immediately apply overrides to config
+            try:
+                scheduler = pco_scheduler.get_scheduler()
+                current_plan = scheduler.get_current_plan() if scheduler else None
+                if current_plan and current_plan.get('plan_id') == plan_id:
+                    for slot_num, person_name in overrides.items():
+                        slot = config.get_slot_by_number(slot_num)
+                        if slot is not None:
+                            slot['extended_name'] = person_name
+                            config.update_slot(slot)
+                            # Push a live UI update via websocket
+                            try:
+                                import shure
+                                import channel as channel_mod
+                                ch = shure.get_network_device_by_slot(slot_num)
+                                if ch and ch not in channel_mod.data_update_list:
+                                    channel_mod.data_update_list.append(ch)
+                            except Exception as _e2:
+                                logging.error(f"WS push error for slot {slot_num}: {_e2}")
+            except Exception as _e:
+                logging.error(f"Error applying live overrides to config: {_e}")
+            self.write({"status": "success", "plan_id": plan_id, "overrides": get_slot_overrides(plan_id)})
+        except Exception as e:
+            logging.error(f"slot override post error: {e}")
+            self.set_status(500)
+            self.write({"error": str(e)})
+
+    def delete(self):
+        try:
+            data = json.loads(self.request.body or b'{}')
+            plan_id = data.get('plan_id')
+            slots = data.get('slots')  # optional list
+            if not plan_id:
+                self.set_status(400)
+                self.write({"error": "plan_id required"})
+                return
+            clear_slot_overrides(plan_id, slots)
+            # If this plan is currently active, restore PCO assignments
+            try:
+                scheduler = pco_scheduler.get_scheduler()
+                current_plan = scheduler.get_current_plan() if scheduler else None
+                if current_plan and current_plan.get('plan_id') == plan_id:
+                    assignments = current_plan.get('slot_assignments', {})
+                    if slots and isinstance(slots, list):
+                        for s in slots:
+                            try:
+                                s_int = int(s)
+                            except Exception:
+                                continue
+                            name = assignments.get(s_int, '')
+                            slot = config.get_slot_by_number(s_int)
+                            if slot is not None:
+                                slot['extended_name'] = name
+                                config.update_slot(slot)
+                                # Push live update for this slot
+                                try:
+                                    import shure
+                                    import channel as channel_mod
+                                    ch = shure.get_network_device_by_slot(s_int)
+                                    if ch and ch not in channel_mod.data_update_list:
+                                        channel_mod.data_update_list.append(ch)
+                                except Exception as _e2:
+                                    logging.error(f"WS push error for slot {s_int}: {_e2}")
+                    else:
+                        def update_slot(slot_num, person_name):
+                            slot = config.get_slot_by_number(slot_num)
+                            if slot:
+                                slot['extended_name'] = person_name
+                                config.update_slot(slot)
+                        scheduler.apply_current_slot_assignments(update_slot)
+                        # Push updates for all standard slots 1..6
+                        try:
+                            import shure
+                            import channel as channel_mod
+                            for s_int in range(1, 7):
+                                ch = shure.get_network_device_by_slot(s_int)
+                                if ch and ch not in channel_mod.data_update_list:
+                                    channel_mod.data_update_list.append(ch)
+                        except Exception as _e3:
+                            logging.error(f"WS bulk push error: {_e3}")
+            except Exception as _e:
+                logging.error(f"Error restoring assignments after clearing overrides: {_e}")
+            self.write({"status": "success"})
+        except Exception as e:
+            logging.error(f"slot override delete error: {e}")
+            self.set_status(500)
+            self.write({"error": str(e)})

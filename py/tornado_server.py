@@ -90,6 +90,16 @@ class JsonHandler(web.RequestHandler):
                     plan['is_live'] = (current_plan and plan['plan_id'] == current_plan['plan_id'])
                     plan['is_manual'] = (scheduler.manual_override_plan and 
                                         plan['plan_id'] == scheduler.manual_override_plan['plan_id'])
+                    # Merge manual slot overrides if present
+                    try:
+                        import pco_endpoints
+                        ov = pco_endpoints.get_slot_overrides(plan['plan_id'])
+                        if ov:
+                            sa = plan.get('slot_assignments') or plan.get('names_by_slot') or {}
+                            sa.update(ov)
+                            plan['slot_assignments'] = sa
+                    except Exception as _e:
+                        logging.error(f"Override merge failed: {_e}")
                 
                 # Return all upcoming plans as an array
                 plan_of_day = upcoming_plans
@@ -1533,6 +1543,7 @@ def twisted():
         (r'/api/live-schedule', LiveScheduleHandler),
         (r'/api/pco/test-parameters', PCOTestParametersHandler),
         (r'/api/live-service', LiveServiceHandler),
+        (r'/api/pco/slot-overrides', pco_endpoints.PCOSlotOverridesHandler),
         (r'/api/drive/authorize', DriveAuthHandler),
         (r'/api/drive/callback', DriveCallbackHandler),
         (r'/api/drive/folders', DriveFoldersHandler),
