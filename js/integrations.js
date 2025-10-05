@@ -1071,20 +1071,27 @@ function displayUpcomingPlans(plans, currentPlanId) {
 function renderPlanActions(plan, status, currentPlanId) {
   // Can't manually select if a scheduled plan is live
   const hasLivePlan = currentPlanId && !plan.is_manual;
+  const encodeAssignments = (assignments) => {
+    try {
+      return encodeURIComponent(JSON.stringify(assignments || {}));
+    } catch (e) {
+      return encodeURIComponent('{}');
+    }
+  };
   
   if (plan.plan_id === currentPlanId && plan.is_manual) {
     return `
       <button class="btn btn-sm btn-danger" onclick="clearManualPlan()">
         Clear Manual
       </button>
-      <button class="btn btn-sm btn-outline-light ms-2" onclick="openOverridesEditor('${plan.plan_id}', ${JSON.stringify(plan.slot_assignments || {})})">
+      <button class="btn btn-sm btn-outline-light ms-2" onclick="openOverridesEditor('${plan.plan_id}', '${encodeAssignments(plan.slot_assignments)}')">
         Overrides
       </button>
     `;
   } else if (status === 'live' && !plan.is_manual) {
     return `
       <span class="text-success">Currently Live</span>
-      <button class="btn btn-sm btn-outline-light ms-2" onclick="openOverridesEditor('${plan.plan_id}', ${JSON.stringify(plan.slot_assignments || {})})">
+      <button class="btn btn-sm btn-outline-light ms-2" onclick="openOverridesEditor('${plan.plan_id}', '${encodeAssignments(plan.slot_assignments)}')">
         Overrides
       </button>
     `;
@@ -1093,14 +1100,14 @@ function renderPlanActions(plan, status, currentPlanId) {
       <button class="btn btn-sm btn-success" onclick="setManualPlan('${plan.plan_id}')">
         Set Live
       </button>
-      <button class="btn btn-sm btn-outline-light ms-2" onclick="openOverridesEditor('${plan.plan_id}', ${JSON.stringify(plan.slot_assignments || {})})">
+      <button class="btn btn-sm btn-outline-light ms-2" onclick="openOverridesEditor('${plan.plan_id}', '${encodeAssignments(plan.slot_assignments)}')">
         Overrides
       </button>
     `;
   } else {
     return `
       <span class="text-muted">Cannot set during live service</span>
-      <button class="btn btn-sm btn-outline-light ms-2" onclick="openOverridesEditor('${plan.plan_id}', ${JSON.stringify(plan.slot_assignments || {})})">
+      <button class="btn btn-sm btn-outline-light ms-2" onclick="openOverridesEditor('${plan.plan_id}', '${encodeAssignments(plan.slot_assignments)}')">
         Overrides
       </button>
     `;
@@ -1531,6 +1538,10 @@ async function loadExistingOverrides(planId) {
 }
 
 window.openOverridesEditor = async function(planId, slotAssignments) {
+  // Allow string (encoded) or object
+  if (typeof slotAssignments === 'string') {
+    try { slotAssignments = JSON.parse(decodeURIComponent(slotAssignments)); } catch (e) { slotAssignments = {}; }
+  }
   ensureOverridesModal();
   const modal = document.getElementById('slot-overrides-modal');
   const form = document.getElementById('slot-overrides-form');
